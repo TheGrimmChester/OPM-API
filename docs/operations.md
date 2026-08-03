@@ -15,7 +15,9 @@ Back up `OPM_DATA_DIR/projects.json` and each project's `.opm/` directory. Delet
 
 ## Upgrades
 
-Replace the `opm-api` / `opm-orchestrator` image. Prefer rolling the API before the dashboard. Use `*:nas` on production hosts.
+Replace the `opm-api` / `opm-orchestrator` image. Prefer rolling the API before
+the web dashboard image (`opm-dashboard`). Use `*:nas` on production hosts.
+Smoke UI: http://127.0.0.1:8098.
 
 ## Reaper
 
