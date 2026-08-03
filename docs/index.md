@@ -11,4 +11,4 @@
 | [security.md](security.md) | Auth, tenancy, sandbox boundaries |
 | [changelog.md](changelog.md) | Release notes |
 
-OPM owns multi-project work management: registry, kanban, roadmaps, ideation, task specs/plans, and task-automation jobs. The operator UI is the **OPM-Dashboard** web dashboard (browser URL; smoke: http://127.0.0.1:8098). Code-review / Repo Watch remains with ORA — deep-link later; do not duplicate review forever.
+OPM owns GitHub-linked project work management: kanban, roadmaps, ideation, task specs/plans, and task-automation jobs (ephemeral clones). Discovery uses OPA-Hub (identity/orgs) and ORA (GitHub connectors). The operator UI is the **OPM-Dashboard** web dashboard (browser URL; smoke: http://127.0.0.1:8098). Code-review / Repo Watch remains with ORA — deep-link; do not duplicate review.
