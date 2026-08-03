@@ -7,7 +7,7 @@
 | `opm-api` | `opm-api` | HTTP control plane: projects, board, tasks, roadmap, ideation, jobs |
 | `opm-orchestrator` | same binary, `orchestrator` command | Job lifecycle / reaper stub; spawns one runner container per job |
 | `opm-runner-task` | ephemeral | Task-automation sandbox (one container per run phase) |
-| `opm-dashboard` | separate repo | Web UI — talks only to `opm-api` |
+| `opm-dashboard` | separate repo | Web dashboard (Vite SPA + nginx) — browser only; talks only to `opm-api` |
 
 ```mermaid
 flowchart LR

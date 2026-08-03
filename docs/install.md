@@ -38,3 +38,6 @@ Production and NAS hosts must use `*:nas` tags only — never deploy smoke tags 
 ## Compose
 
 See `OPA-Stack` profile `compose.opm.yaml` when co-deployed with the family stack.
+
+The **OPM-Dashboard** web dashboard is published at **http://127.0.0.1:8098**
+(`8098:80` on `opm-dashboard`). Open that URL in a browser after the stack is up.
