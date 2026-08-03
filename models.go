@@ -13,13 +13,19 @@ var BoardColumns = []string{
 	"done",
 }
 
-// Project is an entry in the multi-project registry.
+// Project is a linked GitHub repository (kanban/roadmap keyed by owner/repo).
+// Board and task state live under OPM_DATA_DIR — never under a durable local clone.
 type Project struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Path      string    `json:"path"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	OwnerRepo      string    `json:"ownerRepo"`
+	GithubRepoID   string    `json:"githubRepoId,omitempty"`
+	ConnectorID    string    `json:"connectorId"`
+	OrganizationID string    `json:"organizationId,omitempty"`
+	HTMLURL        string    `json:"htmlUrl,omitempty"`
+	DefaultBranch  string    `json:"defaultBranch,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type projectsFile struct {

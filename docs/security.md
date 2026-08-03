@@ -18,4 +18,4 @@ Task-automation runners must not receive `JWT_SECRET`, service JWTs, or connecto
 
 ## Secrets on disk
 
-Do not store provider credentials in `.opm/` JSON. Keep model-provider credentials in the environment or a secrets manager.
+OPM does not store GitHub App private keys or PATs. Those live in ORA connectors. Board/task JSON under `OPM_DATA_DIR` must not contain clone tokens. Ephemeral job credentials are request-scoped and discarded with the tmp workspace.

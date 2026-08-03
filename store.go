@@ -14,8 +14,8 @@ import (
 )
 
 // Store is a filesystem-backed OPM data store.
-// Registry: OPM_DATA_DIR/projects.json (default ~/.config/opm/projects.json)
-// Per-project: <path>/.opm/ (board, tasks, roadmap, ideation, jobs, status)
+// Registry: OPM_DATA_DIR/projects.json
+// Per-project board/tasks: OPM_DATA_DIR/projects/<id>/ (not a durable local git tree)
 type Store struct {
 	mu      sync.RWMutex
 	dataDir string
@@ -32,6 +32,9 @@ func NewStore(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "projects"), 0o755); err != nil {
+		return nil, err
+	}
 	s := &Store{dataDir: dataDir}
 	if _, err := os.Stat(s.registryPath()); os.IsNotExist(err) {
 		if err := s.writeJSON(s.registryPath(), projectsFile{Projects: []Project{}}); err != nil {
@@ -46,7 +49,7 @@ func (s *Store) registryPath() string {
 }
 
 func (s *Store) projectDir(p Project) string {
-	return filepath.Join(p.Path, ".opm")
+	return filepath.Join(s.dataDir, "projects", p.ID)
 }
 
 func (s *Store) writeJSON(path string, v interface{}) error {
@@ -98,40 +101,65 @@ func (s *Store) GetProject(id string) (Project, error) {
 	return Project{}, fmt.Errorf("project not found")
 }
 
-func (s *Store) CreateProject(name, path string) (Project, error) {
+func (s *Store) CreateProject(in Project) (Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	path = filepath.Clean(strings.TrimSpace(path))
-	name = strings.TrimSpace(name)
-	if name == "" || path == "" {
-		return Project{}, fmt.Errorf("name and path required")
+	ownerRepo := normalizeOwnerRepo(in.OwnerRepo)
+	name := strings.TrimSpace(in.Name)
+	connectorID := strings.TrimSpace(in.ConnectorID)
+	if ownerRepo == "" || connectorID == "" {
+		return Project{}, fmt.Errorf("ownerRepo and connectorId required")
 	}
-	info, err := os.Stat(path)
-	if err != nil || !info.IsDir() {
-		return Project{}, fmt.Errorf("path must be an existing directory")
+	if name == "" {
+		parts := strings.SplitN(ownerRepo, "/", 2)
+		name = parts[len(parts)-1]
 	}
 	var f projectsFile
 	if err := s.readJSON(s.registryPath(), &f); err != nil {
 		return Project{}, err
 	}
 	for _, p := range f.Projects {
-		if p.Path == path {
-			return Project{}, fmt.Errorf("project path already registered")
+		if normalizeOwnerRepo(p.OwnerRepo) == ownerRepo {
+			return Project{}, fmt.Errorf("repository already linked")
 		}
 	}
 	now := nowUTC()
 	p := Project{
-		ID:        uuid.NewString(),
-		Name:      name,
-		Path:      path,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:             uuid.NewString(),
+		Name:           name,
+		OwnerRepo:      ownerRepo,
+		GithubRepoID:   strings.TrimSpace(in.GithubRepoID),
+		ConnectorID:    connectorID,
+		OrganizationID: strings.TrimSpace(in.OrganizationID),
+		HTMLURL:        strings.TrimSpace(in.HTMLURL),
+		DefaultBranch:  nz(strings.TrimSpace(in.DefaultBranch), "main"),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if p.HTMLURL == "" {
+		p.HTMLURL = "https://github.com/" + ownerRepo
 	}
 	f.Projects = append(f.Projects, p)
 	if err := s.writeJSON(s.registryPath(), f); err != nil {
 		return Project{}, err
 	}
+	if err := s.ensureLayoutLocked(p); err != nil {
+		return Project{}, err
+	}
 	return p, nil
+}
+
+func normalizeOwnerRepo(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://github.com/")
+	s = strings.TrimPrefix(s, "http://github.com/")
+	s = strings.TrimSuffix(s, ".git")
+	s = strings.Trim(s, "/")
+	parts := strings.Split(s, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	return parts[0] + "/" + parts[1]
 }
 
 func (s *Store) DeleteProject(id string) error {
@@ -143,9 +171,11 @@ func (s *Store) DeleteProject(id string) error {
 	}
 	out := make([]Project, 0, len(f.Projects))
 	found := false
+	var removed Project
 	for _, p := range f.Projects {
 		if p.ID == id {
 			found = true
+			removed = p
 			continue
 		}
 		out = append(out, p)
@@ -154,7 +184,11 @@ func (s *Store) DeleteProject(id string) error {
 		return fmt.Errorf("project not found")
 	}
 	f.Projects = out
-	return s.writeJSON(s.registryPath(), f)
+	if err := s.writeJSON(s.registryPath(), f); err != nil {
+		return err
+	}
+	_ = os.RemoveAll(s.projectDir(removed))
+	return nil
 }
 
 func (s *Store) InitProject(id string) error {
