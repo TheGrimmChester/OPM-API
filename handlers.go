@@ -10,6 +10,8 @@ import (
 )
 
 func registerOPMMux(mux *http.ServeMux, store *Store, authView, authAdmin func(string, http.HandlerFunc)) {
+	registerDiscoveryMux(mux, authView)
+
 	authView("/api/projects", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -20,20 +22,23 @@ func registerOPMMux(mux *http.ServeMux, store *Store, authView, authAdmin func(s
 			}
 			writeJSON(w, map[string]interface{}{"projects": projects})
 		case http.MethodPost:
-			var body struct {
-				Name string `json:"name"`
-				Path string `json:"path"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			in, err := decodeLinkProjectBody(r)
+			if err != nil {
+				if err == errLegacyPath {
+					writeError(w, 400, err.Error())
+					return
+				}
 				writeError(w, 400, "invalid json")
 				return
 			}
-			p, err := store.CreateProject(body.Name, body.Path)
+			if in.OrganizationID == "" {
+				in.OrganizationID = orgHeader(r)
+			}
+			p, err := store.CreateProject(in)
 			if err != nil {
 				writeError(w, 400, err.Error())
 				return
 			}
-			_ = store.InitProject(p.ID)
 			writeJSON(w, p)
 		default:
 			writeError(w, 405, "method not allowed")
@@ -402,14 +407,36 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 }
 
 func stubRunJob(store *Store, j Job) {
-	time.Sleep(200 * time.Millisecond)
+	defer cleanupWorkspace(j.RunID)
+
+	p, err := store.GetProject(j.ProjectID)
+	if err != nil {
+		j.State = "failed"
+		j.Error = err.Error()
+		now := nowUTC()
+		j.CompletedAt = &now
+		_ = store.UpdateJob(j.ProjectID, j)
+		return
+	}
+
+	time.Sleep(100 * time.Millisecond)
 	now := nowUTC()
 	j.State = "starting"
 	j.StartedAt = &now
 	_ = store.UpdateJob(j.ProjectID, j)
 
-	time.Sleep(300 * time.Millisecond)
-	j, err := store.GetJob(j.ProjectID, j.RunID)
+	workDir, err := prepareJobWorkspace(p, j.RunID)
+	if err != nil {
+		fail := nowUTC()
+		j.State = "failed"
+		j.Error = "workspace: " + err.Error()
+		j.CompletedAt = &fail
+		_ = store.UpdateJob(j.ProjectID, j)
+		return
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	j, err = store.GetJob(j.ProjectID, j.RunID)
 	if err != nil || j.State == "cancelled" {
 		return
 	}
@@ -418,19 +445,20 @@ func stubRunJob(store *Store, j Job) {
 	j.ProgressPct = &pct
 	_ = store.UpdateJob(j.ProjectID, j)
 
-	// Build hardened argv for documentation / future orchestrator wiring.
 	_ = openjob.DockerRunArgv(j.RunnerImage, openjob.Labels{
 		Product:  "opm",
 		JobID:    j.RunID,
 		Instance: j.ProjectID,
 	}, openjob.ScrubEnv(map[string]string{
-		"OPM_ACTION":    j.Action,
-		"OPM_SPEC_ID":   j.SpecID,
+		"OPM_ACTION":     j.Action,
+		"OPM_SPEC_ID":    j.SpecID,
 		"OPM_PROJECT_ID": j.ProjectID,
-		"JWT_SECRET":    "should-be-scrubbed",
+		"OPM_OWNER_REPO": p.OwnerRepo,
+		"OPM_WORKSPACE":  workDir,
+		"JWT_SECRET":     "should-be-scrubbed",
 	}))
 
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	j, err = store.GetJob(j.ProjectID, j.RunID)
 	if err != nil || j.State == "cancelled" {
 		return
@@ -445,7 +473,7 @@ func stubRunJob(store *Store, j Job) {
 	st := idleStatus()
 	st.LastUpdate = done.Format(time.RFC3339)
 	st.RunID = j.RunID
-	_ = store.withProject(j.ProjectID, func(p Project) error {
-		return store.writeJSON(store.projectDir(p)+"/status.json", st)
+	_ = store.withProject(j.ProjectID, func(proj Project) error {
+		return store.writeJSON(store.projectDir(proj)+"/status.json", st)
 	})
 }

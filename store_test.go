@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -9,17 +8,21 @@ import (
 func TestStoreLifecycle(t *testing.T) {
 	tmp := t.TempDir()
 	data := filepath.Join(tmp, "opm-data")
-	projPath := filepath.Join(tmp, "workspace")
-	if err := os.MkdirAll(projPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	store, err := NewStore(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := store.CreateProject("Demo", projPath)
+	p, err := store.CreateProject(Project{
+		Name:           "Demo",
+		OwnerRepo:      "acme/demo",
+		ConnectorID:    "conn-1",
+		OrganizationID: "default-org",
+	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if p.OwnerRepo != "acme/demo" {
+		t.Fatalf("ownerRepo=%s", p.OwnerRepo)
 	}
 	if err := store.InitProject(p.ID); err != nil {
 		t.Fatal(err)
@@ -57,5 +60,27 @@ func TestStoreLifecycle(t *testing.T) {
 	}
 	if j.State != "queued" {
 		t.Fatalf("job state=%s", j.State)
+	}
+	// Board state must live under data dir, not a local workspace path.
+	wantDir := filepath.Join(data, "projects", p.ID)
+	if store.projectDir(p) != wantDir {
+		t.Fatalf("projectDir=%s want %s", store.projectDir(p), wantDir)
+	}
+}
+
+func TestCreateProjectRejectsBadRepo(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.CreateProject(Project{OwnerRepo: "bad", ConnectorID: "c"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestNormalizeOwnerRepo(t *testing.T) {
+	if got := normalizeOwnerRepo("https://github.com/Acme/Demo.git"); got != "Acme/Demo" {
+		t.Fatalf("got %s", got)
 	}
 }

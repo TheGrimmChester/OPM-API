@@ -1,24 +1,22 @@
 # Operations
 
+## Backup
+
+- `$OPM_DATA_DIR/projects.json` — linked GitHub projects registry
+- `$OPM_DATA_DIR/projects/<id>/` — board, specs, roadmap, ideation, job records per linked repo
+
+Ephemeral job clones under `OPM_JOB_TMP` are not durable and should not be backed up.
+
+## Restore
+
+Restore the data directory onto a host with the same `OPM_DATA_DIR`. Reconfigure `PEER_OPA_URL` / `PEER_ORA_URL` so discovery and clones work. Connectors themselves live in ORA (ClickHouse / connector store).
+
 ## Health
 
-- API: `GET /api/health` on `LISTEN_ADDR` (default `:8096`)
-- Orchestrator: `GET /api/health` on `ORCHESTRATOR_LISTEN_ADDR` (default `:8099`)
+- `GET /api/health` on `opm-api`
+- `GET /api/hub/status` — verify hub + ORA linkage
+- `GET /api/peer/health` with a service JWT when `OPEN_SERVICE_JWT_SECRET` is set
 
-## Logs
+## Migration from local-folder projects
 
-Structured stderr from the Go process. Job snapshots live under `<project>/.opm/runs/`.
-
-## Data
-
-Back up `OPM_DATA_DIR/projects.json` and each project's `.opm/` directory. Deleting a registry entry does not remove workspace files.
-
-## Upgrades
-
-Replace the `opm-api` / `opm-orchestrator` image. Prefer rolling the API before
-the web dashboard image (`opm-dashboard`). Use `*:nas` on production hosts.
-Smoke UI: http://127.0.0.1:8098.
-
-## Reaper
-
-Orchestrator owns labeled containers (`opm.job=<id>`, `opm.instance=<id>`). Reap orphaned runners after job terminal states.
+Older registries used `path` (host directory) and `<path>/.opm/`. That model is removed. Re-link repositories via the dashboard (hub org → connector → GitHub repo). Do not copy legacy path entries forward.
