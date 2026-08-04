@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	openhttp "github.com/TheGrimmChester/open-http-go"
 	"net/http"
 	"os"
 	"strings"
@@ -15,9 +16,7 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	openhttp.WriteError(w, status, "error", msg)
 }
 
 func envOr(k, def string) string {
@@ -28,21 +27,7 @@ func envOr(k, def string) string {
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
-		}
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Organization-ID, X-Project-ID")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return openhttp.MiddlewareCORS(next)
 }
 
 func nowUTC() time.Time { return time.Now().UTC() }
