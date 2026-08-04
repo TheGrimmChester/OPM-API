@@ -22,6 +22,14 @@ func initAuthGate() {
 	authGate = g
 }
 
+// registerLocalAuthMux mounts /api/auth/status (+ login 503 in codeployed).
+// OPM never issues local login tokens; hub is the identity home when co-deployed.
+func registerLocalAuthMux(mux *http.ServeMux) {
+	if authGate != nil {
+		authGate.RegisterLocalAuth(mux)
+	}
+}
+
 func AuthMiddleware(handler http.HandlerFunc, requiredRole string) http.HandlerFunc {
 	return authGate.Middleware(requiredRole, handler)
 }
