@@ -604,13 +604,17 @@ func (s *Store) GetSpecMarkdown(projectID, specID string) (string, error) {
 
 // TaskValidActions lists which run actions the board/detail UI may offer.
 type TaskValidActions struct {
-	Planning           bool `json:"planning"`
-	Implementation     bool `json:"implementation"`
-	Review             bool `json:"review"`
-	QaFix              bool `json:"qaFix"`
-	Approve            bool `json:"approve"`
-	FollowupPlanning   bool `json:"followupPlanning"`
-	GenerateChangelog  bool `json:"generateChangelog"`
+	Planning          bool `json:"planning"`
+	Implementation    bool `json:"implementation"`
+	Review            bool `json:"review"`
+	QaFix             bool `json:"qaFix"`
+	Approve           bool `json:"approve"`
+	FollowupPlanning  bool `json:"followupPlanning"`
+	GenerateChangelog bool `json:"generateChangelog"`
+	Recover           bool `json:"recover"`
+	MarkStuck         bool `json:"markStuck"`
+	Pause             bool `json:"pause"`
+	Resume            bool `json:"resume"`
 }
 
 func (s *Store) GetTaskValidActions(projectID, specID string) (TaskValidActions, error) {
@@ -620,6 +624,7 @@ func (s *Store) GetTaskValidActions(projectID, specID string) (TaskValidActions,
 		return out, err
 	}
 	plan, _ := s.GetPlan(projectID, specID)
+	prog, _ := s.GetProgress(projectID, specID)
 	hasPlan := len(plan.Phases) > 0 || plan.PlanStatus != "" && plan.PlanStatus != "drafted"
 	approved := true
 	if t.RequireReviewBeforeCoding {
@@ -637,14 +642,32 @@ func (s *Store) GetTaskValidActions(projectID, specID string) (TaskValidActions,
 		})
 	}
 	status := t.Status
-	out.Planning = status == "backlog" || status == "queue" || status == "human_review"
-	out.Implementation = (status == "queue" || status == "in_progress") && approved
-	out.Review = status == "in_progress" || status == "review"
-	out.QaFix = status == "review" || status == "in_progress"
+	paused := prog.Paused
+	stuckCount := countStuckOrFailed(plan)
+	out.Planning = !paused && (status == "backlog" || status == "queue" || status == "human_review")
+	out.Implementation = !paused && (status == "queue" || status == "in_progress") && approved
+	out.Review = !paused && (status == "in_progress" || status == "review")
+	out.QaFix = !paused && (status == "review" || status == "in_progress")
 	out.Approve = status == "human_review"
-	out.FollowupPlanning = hasPlan && (status == "queue" || status == "in_progress" || status == "review" || status == "done")
+	out.FollowupPlanning = !paused && hasPlan && (status == "queue" || status == "in_progress" || status == "review" || status == "done")
 	out.GenerateChangelog = true
+	out.Recover = hasPlan && (stuckCount > 0 || prog.StuckSubtaskID != "" || status == "in_progress" || status == "review")
+	out.MarkStuck = !paused && hasPlan && (status == "queue" || status == "in_progress" || status == "review") && stuckCount == 0
+	out.Pause = !paused && hasPlan && (status == "queue" || status == "in_progress" || status == "review")
+	out.Resume = paused
 	return out, nil
+}
+
+func countStuckOrFailed(plan ImplementationPlan) int {
+	n := 0
+	for _, ph := range plan.Phases {
+		for _, st := range ph.Subtasks {
+			if st.Status == "stuck" || st.Status == "failed" {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func (s *Store) PutPlan(projectID, specID string, plan ImplementationPlan) error {

@@ -59,6 +59,11 @@ func executeJob(store *Store, j Job) {
 
 	_ = workDir // workspace prepared for future containerized runners
 
+	if blocked, msg := taskPausedBlock(store, j); blocked {
+		fail(msg, fmt.Errorf("paused"))
+		return
+	}
+
 	resultMsg := ""
 	switch j.Action {
 	case "run-planning", "run-followup-planning":
@@ -69,6 +74,14 @@ func executeJob(store *Store, j Job) {
 		resultMsg, err = builtinReview(store, j)
 	case "run-qa-fix":
 		resultMsg, err = builtinQaFix(store, j)
+	case "recover-subtask":
+		resultMsg, err = builtinRecover(store, j)
+	case "mark-stuck":
+		resultMsg, err = builtinMarkStuck(store, j)
+	case "pause-task":
+		resultMsg, err = builtinPause(store, j)
+	case "resume-task":
+		resultMsg, err = builtinResume(store, j)
 	case "generate-changelog":
 		resultMsg, err = builtinChangelog(store, j)
 	case "run-roadmap-discovery", "run-roadmap-features", "run-ideation":
@@ -100,12 +113,17 @@ func executeJob(store *Store, j Job) {
 	j.ProgressPct = &pct
 	_ = store.UpdateJob(j.ProjectID, j)
 
-	st := idleStatus()
-	st.LastUpdate = done.Format(time.RFC3339)
-	st.RunID = j.RunID
-	_ = store.withProject(j.ProjectID, func(proj Project) error {
-		return store.writeJSON(store.projectDir(proj)+"/status.json", st)
-	})
+	switch j.Action {
+	case "mark-stuck", "pause-task", "resume-task", "recover-subtask":
+		// These actions write their own project status.json.
+	default:
+		st := idleStatus()
+		st.LastUpdate = done.Format(time.RFC3339)
+		st.RunID = j.RunID
+		_ = store.withProject(j.ProjectID, func(proj Project) error {
+			return store.writeJSON(store.projectDir(proj)+"/status.json", st)
+		})
+	}
 }
 
 func builtinPlanning(store *Store, j Job) (string, error) {
@@ -349,6 +367,225 @@ func builtinQaFix(store *Store, j Job) (string, error) {
 	_, _ = store.MoveTask(j.ProjectID, j.SpecID, "in_progress")
 	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation", fmt.Sprintf("[%s] qa-fix applied\n", j.RunID))
 	return "QA fix (builtin): reset failed subtasks; moved to in_progress. Re-run implementation/review.", nil
+}
+
+func taskPausedBlock(store *Store, j Job) (bool, string) {
+	switch j.Action {
+	case "pause-task", "resume-task", "recover-subtask", "mark-stuck", "generate-changelog":
+		return false, ""
+	}
+	if j.SpecID == "" {
+		return false, ""
+	}
+	prog, err := store.GetProgress(j.ProjectID, j.SpecID)
+	if err != nil {
+		return false, ""
+	}
+	if prog.Paused {
+		return true, "Task is paused — enqueue resume-task before continuing automation."
+	}
+	return false, ""
+}
+
+func builtinPause(store *Store, j Job) (string, error) {
+	if j.SpecID == "" {
+		return "pause-task requires specId", fmt.Errorf("specId required")
+	}
+	prog, _ := store.GetProgress(j.ProjectID, j.SpecID)
+	if prog.Paused {
+		return "Task already paused.", nil
+	}
+	prog.Paused = true
+	prog.IsRunning = false
+	prog.Action = "paused"
+	prog.RunID = j.RunID
+	completedAt := nowUTC()
+	prog.CompletedAt = &completedAt
+	if err := store.PutProgress(j.ProjectID, j.SpecID, prog); err != nil {
+		return "Failed to write pause state", err
+	}
+	st := idleStatus()
+	st.State = "idle"
+	st.Spec = j.SpecID
+	st.LastUpdate = completedAt.Format(time.RFC3339)
+	st.RunID = j.RunID
+	_ = store.withProject(j.ProjectID, func(proj Project) error {
+		return store.writeJSON(store.projectDir(proj)+"/status.json", st)
+	})
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation", fmt.Sprintf("[%s] pause-task: automation paused\n", j.RunID))
+	return "Task paused (builtin): further plan/build/review jobs blocked until resume-task.", nil
+}
+
+func builtinResume(store *Store, j Job) (string, error) {
+	if j.SpecID == "" {
+		return "resume-task requires specId", fmt.Errorf("specId required")
+	}
+	prog, _ := store.GetProgress(j.ProjectID, j.SpecID)
+	if !prog.Paused {
+		return "Task was not paused.", nil
+	}
+	prog.Paused = false
+	prog.IsRunning = false
+	prog.Action = "resumed"
+	prog.RunID = j.RunID
+	if err := store.PutProgress(j.ProjectID, j.SpecID, prog); err != nil {
+		return "Failed to clear pause state", err
+	}
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation", fmt.Sprintf("[%s] resume-task: automation resumed\n", j.RunID))
+	return "Task resumed (builtin): plan/build/review jobs allowed again.", nil
+}
+
+func builtinRecover(store *Store, j Job) (string, error) {
+	if j.SpecID == "" {
+		return "recover-subtask requires specId", fmt.Errorf("specId required")
+	}
+	plan, err := store.GetPlan(j.ProjectID, j.SpecID)
+	if err != nil || len(plan.Phases) == 0 {
+		return "No plan — run planning first", fmt.Errorf("plan missing")
+	}
+
+	recovered := []string{}
+	for i := range plan.Phases {
+		for k := range plan.Phases[i].Subtasks {
+			st := &plan.Phases[i].Subtasks[k]
+			switch st.Status {
+			case "stuck", "failed", "in_progress":
+				st.Status = "pending"
+				recovered = append(recovered, st.ID)
+			}
+		}
+	}
+	if len(recovered) == 0 {
+		// Nothing explicitly stuck — mark the first pending coding subtask recoverable no-op message.
+		return "Recover (builtin): no stuck/failed/in_progress subtasks to reset.", nil
+	}
+	plan.Status = "in_progress"
+	plan.PlanStatus = "in_progress"
+	if err := store.PutPlan(j.ProjectID, j.SpecID, plan); err != nil {
+		return "Failed to update plan after recover", err
+	}
+
+	prog, _ := store.GetProgress(j.ProjectID, j.SpecID)
+	total, done := countPlanSubtasks(plan)
+	prog.Paused = false
+	prog.IsRunning = false
+	prog.Action = "recover-subtask"
+	prog.StuckSubtaskID = ""
+	prog.Progress = pct(done, total)
+	prog.SubtaskCompleted = done
+	prog.SubtaskTotal = total
+	prog.CurrentPhaseName = "Recovered"
+	prog.RunID = j.RunID
+	_ = store.PutProgress(j.ProjectID, j.SpecID, prog)
+
+	_, _ = store.MoveTask(j.ProjectID, j.SpecID, "in_progress")
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+		fmt.Sprintf("[%s] recover-subtask: reset %s to pending\n", j.RunID, strings.Join(recovered, ", ")))
+
+	st := idleStatus()
+	st.State = "idle"
+	st.Spec = j.SpecID
+	st.LastUpdate = nowUTC().Format(time.RFC3339)
+	st.RunID = j.RunID
+	_ = store.withProject(j.ProjectID, func(proj Project) error {
+		return store.writeJSON(store.projectDir(proj)+"/status.json", st)
+	})
+
+	return fmt.Sprintf("Recover (builtin): reset %d subtask(s) (%s) to pending; moved to in_progress. Re-enqueue run-implementation.",
+		len(recovered), strings.Join(recovered, ", ")), nil
+}
+
+func builtinMarkStuck(store *Store, j Job) (string, error) {
+	if j.SpecID == "" {
+		return "mark-stuck requires specId", fmt.Errorf("specId required")
+	}
+	plan, err := store.GetPlan(j.ProjectID, j.SpecID)
+	if err != nil || len(plan.Phases) == 0 {
+		return "No plan — run planning first", fmt.Errorf("plan missing")
+	}
+	stuckID := ""
+	for i := range plan.Phases {
+		for k := range plan.Phases[i].Subtasks {
+			st := &plan.Phases[i].Subtasks[k]
+			if st.Status == "pending" || st.Status == "" || st.Status == "in_progress" {
+				st.Status = "stuck"
+				stuckID = st.ID
+				goto wrote
+			}
+		}
+	}
+wrote:
+	if stuckID == "" {
+		return "Mark stuck (builtin): no pending/in_progress subtask to mark.", fmt.Errorf("nothing to mark")
+	}
+	_ = store.PutPlan(j.ProjectID, j.SpecID, plan)
+	prog, _ := store.GetProgress(j.ProjectID, j.SpecID)
+	prog.IsRunning = false
+	prog.Action = "stuck"
+	prog.StuckSubtaskID = stuckID
+	prog.RunID = j.RunID
+	_ = store.PutProgress(j.ProjectID, j.SpecID, prog)
+	_, _ = store.MoveTask(j.ProjectID, j.SpecID, "in_progress")
+	st := idleStatus()
+	st.State = "stuck"
+	st.Spec = j.SpecID
+	st.LastUpdate = nowUTC().Format(time.RFC3339)
+	st.RunID = j.RunID
+	_ = store.withProject(j.ProjectID, func(proj Project) error {
+		return store.writeJSON(store.projectDir(proj)+"/status.json", st)
+	})
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+		fmt.Sprintf("[%s] mark-stuck: subtask %s\n", j.RunID, stuckID))
+	return fmt.Sprintf("Marked subtask %s stuck (builtin). Enqueue recover-subtask to continue.", stuckID), nil
+}
+
+// markJobCancelledStuck marks the next incomplete subtask stuck when a job is cancelled mid-run.
+func markJobCancelledStuck(store *Store, j Job) {
+	if j.SpecID == "" {
+		return
+	}
+	switch j.Action {
+	case "run-implementation", "run-planning", "run-followup-planning", "run-review", "run-qa-fix":
+	default:
+		return
+	}
+	plan, err := store.GetPlan(j.ProjectID, j.SpecID)
+	if err != nil {
+		return
+	}
+	stuckID := ""
+	for i := range plan.Phases {
+		for k := range plan.Phases[i].Subtasks {
+			st := &plan.Phases[i].Subtasks[k]
+			if st.Status == "pending" || st.Status == "" || st.Status == "in_progress" {
+				st.Status = "stuck"
+				stuckID = st.ID
+				goto wrote
+			}
+		}
+	}
+wrote:
+	if stuckID == "" {
+		return
+	}
+	_ = store.PutPlan(j.ProjectID, j.SpecID, plan)
+	prog, _ := store.GetProgress(j.ProjectID, j.SpecID)
+	prog.IsRunning = false
+	prog.Action = "stuck"
+	prog.StuckSubtaskID = stuckID
+	prog.RunID = j.RunID
+	_ = store.PutProgress(j.ProjectID, j.SpecID, prog)
+	st := idleStatus()
+	st.State = "stuck"
+	st.Spec = j.SpecID
+	st.Active = false
+	st.LastUpdate = nowUTC().Format(time.RFC3339)
+	st.RunID = j.RunID
+	_ = store.withProject(j.ProjectID, func(proj Project) error {
+		return store.writeJSON(store.projectDir(proj)+"/status.json", st)
+	})
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+		fmt.Sprintf("[%s] job cancelled — marked subtask %s stuck\n", j.RunID, stuckID))
 }
 
 func builtinChangelog(store *Store, j Job) (string, error) {
