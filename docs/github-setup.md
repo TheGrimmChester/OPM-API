@@ -62,6 +62,22 @@ Rebuild with production tags (`opm-api:nas`, `opm-dashboard:nas`) — never smok
 3. Select **GitHub connector** (from ORA via `GET /api/github/connectors`)
 4. Pick a **repository** and submit → `POST /api/projects`
 
+## 5. Bind GitHub Milestones and Projects
+
+After linking a repo:
+
+1. **Roadmap** or **Board → task detail** → pick a **GitHub Milestone** (listed from the connected repo via ORA).
+2. **Bind GitHub Project** (Projects v2) once per OPM project; then **Sync to Project** on tasks/features creates a draft item and best-effort maps board Status.
+
+**GitHub App permissions on the ORA connector:**
+
+| Feature | Required permission |
+|---------|---------------------|
+| Milestones | **Issues** read/write |
+| Projects v2 | **Organization projects** write (optional; without it milestone bind still works) |
+
+PAT connectors need equivalent classic or fine-grained scopes (`repo` / Issues + Projects).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -70,6 +86,8 @@ Rebuild with production tags (`opm-api:nas`, `opm-dashboard:nas`) — never smok
 | `PEER_ORA_URL not configured` on connectors | Missing peer env | Set `PEER_ORA_URL` on `opm-api`, recreate container |
 | Empty connector list, hub OK | No GitHub App install / wrong org | Install app in ORA; check `organizationId` |
 | `ora unavailable` | ORA down or service JWT mismatch | Check `ora-api` health; verify `OPEN_SERVICE_JWT_SECRET` |
+| `missing scope` on milestones/projects | ORA image without `scm:pm` peer routes, or JWT missing scope | Redeploy `ora-api:nas` + `opm-api:nas` together |
+| `missing_organization_projects` | App lacks Projects permission | Grant **Organization projects** on the GitHub App install |
 | Job fails: `git: executable file not found` | `opm-api` image missing git | Rebuild `opm-api:nas` with git in runtime stage |
 | Hub org list shows only `default-org` | `PEER_OPA_URL` unset | Point OPM at hub; confirm tenancy API |
 
@@ -77,4 +95,5 @@ Rebuild with production tags (`opm-api:nas`, `opm-dashboard:nas`) — never smok
 
 - Dashboard talks **only** to `opm-api`; never call ORA or Hub directly from the browser.
 - Clone tokens for task jobs are fetched from ORA per request and discarded with ephemeral workspaces.
+- Milestone/Project sync uses short-lived service JWTs (`scm:pm`); GitHub secrets never enter OPM storage.
 - See [security.md](security.md) and [interop.md](interop.md) for service JWT and tenancy boundaries.

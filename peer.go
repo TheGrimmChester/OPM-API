@@ -54,6 +54,75 @@ func peerCloneCredentials(ctx context.Context, orgID, connectorID, ownerRepo str
 	return out, err
 }
 
+func peerORAConfigPM(orgID string) openclient.PeerConfig {
+	return peerORAConfig(orgID, "scm:pm")
+}
+
+func peerListMilestones(ctx context.Context, orgID, connectorID, ownerRepo string) (map[string]interface{}, error) {
+	cfg := peerORAConfigPM(orgID)
+	body := map[string]interface{}{
+		"connector_id":   connectorID,
+		"repo_full_name": ownerRepo,
+	}
+	var out map[string]interface{}
+	err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/peer/scm/milestones/list", body, &out)
+	return out, err
+}
+
+func peerUpsertMilestone(ctx context.Context, orgID, connectorID, ownerRepo string, number int, title, description, state string) (map[string]interface{}, error) {
+	cfg := peerORAConfigPM(orgID)
+	body := map[string]interface{}{
+		"connector_id":   connectorID,
+		"repo_full_name": ownerRepo,
+		"number":         number,
+		"title":          title,
+		"description":    description,
+		"state":          state,
+	}
+	var out map[string]interface{}
+	err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/peer/scm/milestones/upsert", body, &out)
+	return out, err
+}
+
+func peerListGitHubProjects(ctx context.Context, orgID, connectorID, ownerRepo string) (map[string]interface{}, error) {
+	cfg := peerORAConfigPM(orgID)
+	body := map[string]interface{}{
+		"connector_id":   connectorID,
+		"repo_full_name": ownerRepo,
+	}
+	var out map[string]interface{}
+	err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/peer/scm/projects/list", body, &out)
+	return out, err
+}
+
+func peerUpsertProjectItem(ctx context.Context, orgID, connectorID, projectID, itemID, title, bodyText, statusHint string) (map[string]interface{}, error) {
+	cfg := peerORAConfigPM(orgID)
+	body := map[string]interface{}{
+		"connector_id": connectorID,
+		"project_id":   projectID,
+		"item_id":      itemID,
+		"title":        title,
+		"body":         bodyText,
+		"status_hint":  statusHint,
+	}
+	var out map[string]interface{}
+	err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/peer/scm/projects/items/upsert", body, &out)
+	return out, err
+}
+
+func peerSetProjectItemStatus(ctx context.Context, orgID, connectorID, projectID, itemID, statusHint string) (map[string]interface{}, error) {
+	cfg := peerORAConfigPM(orgID)
+	body := map[string]interface{}{
+		"connector_id": connectorID,
+		"project_id":   projectID,
+		"item_id":      itemID,
+		"status_hint":  statusHint,
+	}
+	var out map[string]interface{}
+	err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/peer/scm/projects/items/status", body, &out)
+	return out, err
+}
+
 func peerHubGET(ctx context.Context, path string) (map[string]interface{}, error) {
 	if !peerOPAConfigured() {
 		return nil, openclient.ErrPeerUnavailable
