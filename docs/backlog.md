@@ -2,7 +2,12 @@
 
 Short gap list after containerized task spawn, stuck/recover, pause/resume, and board DnD.
 
-## Working today (NAS)
+Statuses below describe **`origin/main`**, re-checked 2026-08-04 by reading the cited code. This checkout often
+sits on a feature branch, so "it works when I run it" is not evidence that something merged. Deployment
+verification is unavailable this pass (the running image reports build id `opm-api-dev` with no commit identity
+and capability routes need an operator token), so nothing here is claimed as verified on the deployed stack.
+
+## Working today
 
 - Hub-auth via dashboard `/hub-auth` proxy; JWT accepted by `opm-api`
 - Hub org discovery + ORA GitHub connectors / repo list / project link
@@ -22,10 +27,15 @@ Short gap list after containerized task spawn, stuck/recover, pause/resume, and 
 
 | Area | Gap | Notes |
 |------|-----|-------|
-| Jobs | Model-backed agents in runner | **Shipped**: runner calls OpenAI-compatible API when `OPM_MODEL_API_KEY` set; fallback + builtin otherwise |
+| **Delivery** | **No code delivery** | Largest gap. Job clone is discarded; only `git clone` exists. No commit/push/PR. `run-implementation` advances the plan; `run-review` judges plan completeness, not a diff |
+| Jobs | Model-backed agents in runner | **Shipped for planning/implementation/review**: OpenAI-compatible API when `OPM_MODEL_API_KEY` set; fallback + builtin otherwise |
 | Jobs | Higher-quality planning/impl | Model output persisted when key present; builtin heuristics remain fallback |
+| Roadmap / ideation | Generation | **Shipped (builtin)**: discovery/features/ideation write real artifacts; model-backed path for these still follow-on |
+| Pipeline | Skip-to-phase | **Shipped**: `skip-to-phase` + `targetPhase` |
+| Orchestrator | Dispatch + reaping | Health + spawn-probe only (scheduler stub); spawn in-process in `opm-api` |
+| Peer | Projects v2 draft title refresh | Silent no-op in ORA — task renames never reach the board |
+| Docs / E2E | Automated suite | Manual curl + UI verification |
 
-| Docs / E2E | Automated NAS suite | Manual curl + UI verification |
 
 ## Explicit non-goals (for now)
 
