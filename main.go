@@ -37,9 +37,10 @@ func main() {
 	}
 
 	initAuthGate()
+	initTenantAuth()
 	authRequired := authRequiredEnv()
 	if authRequired {
-		log.Printf("auth: ENABLED (OPA_AUTH_REQUIRED)")
+		log.Printf("auth: ENABLED (OPA_AUTH_REQUIRED); tenant org scope enforced")
 	} else {
 		log.Printf("auth: disabled — endpoints open")
 	}
