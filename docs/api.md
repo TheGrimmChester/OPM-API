@@ -26,9 +26,33 @@ Requires `PEER_OPA_URL` / `PEER_ORA_URL` as documented in [interop.md](interop.m
 - `DELETE /api/projects/{id}` → 204 (removes registry entry + server-side board data)
 - `POST /api/projects/{id}/init` → ensure data-dir layout
 
-`Project` fields: `id`, `name`, `ownerRepo`, `connectorId`, `organizationId`, `githubRepoId`, `htmlUrl`, `defaultBranch`, timestamps.
+`Project` fields: `id`, `name`, `ownerRepo`, `connectorId`, `organizationId`, `githubRepoId`, `htmlUrl`, `defaultBranch`, optional `githubProjectId` / `githubProjectTitle` / `githubProjectUrl` (Projects v2 bind), timestamps.
 
 Local folder / `path` create payloads are rejected.
+
+## GitHub Milestones and Projects (via ORA)
+
+Credentials stay in **ORA**. OPM calls peer `scm:pm` endpoints; the dashboard uses these project-scoped routes (send org/project headers).
+
+- `GET /api/projects/{id}/github/milestones` → `{ milestones: [{ number, title, description, state, html_url }] }`
+- `POST /api/projects/{id}/github/milestones/assign` `{ specId?|featureId?|phaseId?, milestoneNumber?, title?, description?, state?, createIfMissing? }` → bind + optional upsert on GitHub
+- `GET /api/projects/{id}/github/projects` → `{ projects: [{ id, title, url, number }], boundProjectId, … }` (Projects v2 GraphQL)
+- `POST /api/projects/{id}/github/projects/bind` `{ projectId, projectTitle?, projectUrl? }` → bind OPM project to a GitHub Project
+- `POST /api/projects/{id}/github/projects/sync-item` `{ specId?|featureId?, title?, body?, status? }` → create/update draft Project item; maps OPM column → Status option best-effort
+- `POST /api/projects/{id}/github/sync-task/{specId}` → push task title/status to bound Project item + optional milestone state
+
+Task fields: `githubMilestoneNumber`, `githubMilestoneTitle`, `githubMilestoneUrl`, `githubProjectId`, `githubProjectItemId` (also via `PATCH …/tasks/{specId}`).
+
+Roadmap phase/feature fields: `github_milestone_number`, `github_milestone_title`, `github_milestone_url`; features also `github_project_id`, `github_project_item_id`.
+
+**Required GitHub App / token scopes (ORA connector):**
+
+| Capability | App permission / PAT |
+|------------|----------------------|
+| List/create/update milestones | `issues: write` (+ `metadata: read`) |
+| List Projects v2 / draft items / Status | `organization_projects: write` (App) or fine-grained **Projects** read/write (PAT) |
+
+Without `organization_projects`, milestone bind still works; Projects list returns `missing_organization_projects`. Moving a board task with a linked Project item best-effort syncs Status.
 
 ## Board and tasks
 

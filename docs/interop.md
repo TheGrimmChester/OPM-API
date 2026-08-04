@@ -33,6 +33,7 @@ AUTH_MODE=codeployed
 | OPM → Hub | Org list, GitHub status advertisement | `health:read` (peer probe) |
 | OPM → ORA | List connectors / repos | `connectors:read` |
 | OPM → ORA | Short-lived clone credentials for job tmp workspaces | `scm:clone` |
+| OPM → ORA | Milestones + Projects v2 list/bind/sync | `scm:pm` |
 | OPM → ORA | Deep-link / delegate review (optional) | review scopes as needed |
 | Dashboard → foreign API | **Forbidden** — UI talks only to `opm-api` | — |
 
