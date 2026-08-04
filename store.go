@@ -180,7 +180,22 @@ func (s *Store) CreateProject(in Project) (Project, error) {
 }
 
 // BindGitHubProject sets the Projects v2 binding on a linked OPM project registry entry.
+// A blank project id is rejected: clearing the binding is UnbindGitHubProject, so an
+// empty bind cannot silently unbind.
 func (s *Store) BindGitHubProject(projectID, ghProjectID, title, url string) (Project, error) {
+	if strings.TrimSpace(ghProjectID) == "" {
+		return Project{}, fmt.Errorf("projectId required (use the unbind route to clear the binding)")
+	}
+	return s.setGitHubProjectBinding(projectID, ghProjectID, title, url)
+}
+
+// UnbindGitHubProject clears the Projects v2 binding. The GitHub Project and its
+// items are left untouched.
+func (s *Store) UnbindGitHubProject(projectID string) (Project, error) {
+	return s.setGitHubProjectBinding(projectID, "", "", "")
+}
+
+func (s *Store) setGitHubProjectBinding(projectID, ghProjectID, title, url string) (Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var f projectsFile

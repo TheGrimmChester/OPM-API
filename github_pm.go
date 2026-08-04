@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -188,6 +189,14 @@ func handleGitHubProjects(w http.ResponseWriter, r *http.Request, store *Store, 
 		writeJSON(w, updated)
 		return
 	}
+	if rest[0] == "unbind" && r.Method == http.MethodPost {
+		handleProjectUnbind(w, r, store, p)
+		return
+	}
+	if rest[0] == "items" && len(rest) > 1 && rest[1] == "unbind" && r.Method == http.MethodPost {
+		handleTaskProjectUnbind(w, r, store, p)
+		return
+	}
 	if rest[0] == "sync-item" && r.Method == http.MethodPost {
 		var body struct {
 			SpecID    string `json:"specId"`
@@ -236,22 +245,63 @@ func handleGitHubProjects(w http.ResponseWriter, r *http.Request, store *Store, 
 
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
+		specID := strings.TrimSpace(body.SpecID)
 		out, err := peerUpsertProjectItem(ctx, p.OrganizationID, p.ConnectorID, ghProjectID, itemID, title, body.Body, statusHint)
 		if err != nil {
-			writeError(w, 502, "ora project item: "+err.Error())
+			code, status := projectSyncHTTPStatus(err)
+			recordProjectSyncFailure(store, p, specID, "sync-item", status, err.Error())
+			payload := map[string]interface{}{
+				"error": "ora project item: " + err.Error(), "status": status,
+				"titleSynced": false, "githubProjectId": ghProjectID,
+			}
+			if specID != "" {
+				payload["specId"] = specID
+			}
+			var fault *peerIssueFault
+			if errors.As(err, &fault) && len(fault.Missing) > 0 {
+				payload["missing"] = fault.Missing
+			}
+			writeJSONStatus(w, code, payload)
 			return
 		}
-		newItemID := strFromAny(out["item_id"])
+		sync := decodeProjectItemSync(out)
+		newItemID := sync.ItemID
 		if newItemID == "" {
 			newItemID = itemID
 		}
 
-		result := map[string]interface{}{"ok": true, "sync": out, "githubProjectId": ghProjectID, "itemId": newItemID}
-		if specID := strings.TrimSpace(body.SpecID); specID != "" {
-			t, err := store.UpdateTask(p.ID, specID, map[string]interface{}{
-				"githubProjectId":     ghProjectID,
-				"githubProjectItemId": newItemID,
-			})
+		// A 200 whose title did not land is a partial failure, not success: the card
+		// exists but its title does not match the task.
+		if !sync.TitleSynced && sync.TitleStatus != projectSyncNothingToSync {
+			reason := sync.TitleNote
+			if reason == "" {
+				reason = "ORA reported title_synced=false"
+			}
+			recordProjectSyncFailure(store, p, specID, "sync-item", sync.TitleStatus, reason)
+			// Keep the item id: only the rename failed, the card is real.
+			if specID != "" && newItemID != "" {
+				_, _ = store.UpdateTask(p.ID, specID, map[string]interface{}{
+					"githubProjectId":     ghProjectID,
+					"githubProjectItemId": newItemID,
+				})
+			}
+			payload := map[string]interface{}{
+				"error": reason, "status": sync.TitleStatus, "titleSynced": false,
+				"githubProjectId": ghProjectID, "itemId": newItemID, "sync": out,
+			}
+			if specID != "" {
+				payload["specId"] = specID
+			}
+			writeJSONStatus(w, projectStatusHTTPCode(sync.TitleStatus), payload)
+			return
+		}
+
+		result := map[string]interface{}{
+			"ok": true, "status": sync.TitleStatus, "titleSynced": sync.TitleSynced,
+			"sync": out, "githubProjectId": ghProjectID, "itemId": newItemID,
+		}
+		if specID != "" {
+			t, err := recordProjectSyncSuccess(store, p, specID, ghProjectID, newItemID)
 			if err != nil {
 				writeError(w, 400, err.Error())
 				return
@@ -297,26 +347,12 @@ func handleGitHubSyncTask(w http.ResponseWriter, r *http.Request, store *Store, 
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	ghProjectID := t.GithubProjectID
-	if ghProjectID == "" {
-		ghProjectID = p.GithubProjectID
-	}
-	if ghProjectID != "" {
-		out, err := peerUpsertProjectItem(ctx, p.OrganizationID, p.ConnectorID, ghProjectID,
-			t.GithubProjectItemID, t.Title, t.Description, t.Status)
-		if err != nil {
-			result["projectSync"] = map[string]interface{}{"ok": false, "error": err.Error()}
-		} else {
-			result["projectSync"] = out
-			if id := strFromAny(out["item_id"]); id != "" && id != t.GithubProjectItemID {
-				t, _ = store.UpdateTask(p.ID, specID, map[string]interface{}{
-					"githubProjectId": ghProjectID, "githubProjectItemId": id,
-				})
-			}
-		}
-	} else {
-		result["projectSync"] = map[string]interface{}{"ok": false, "note": "no GitHub Project bound"}
-	}
+	// syncTaskProjectItem records the outcome on the task and in the spec log, so a
+	// board that did not update is visible afterwards rather than only in this reply.
+	outcome := syncTaskProjectItem(ctx, store, p, t, "sync-task")
+	result["projectSync"] = outcome.payload()
+	result["projectSync"].(map[string]interface{})["ok"] = outcome.ok()
+	t = outcome.Task
 
 	if t.GithubMilestoneNumber > 0 || t.GithubMilestoneTitle != "" {
 		state := ""
@@ -332,6 +368,14 @@ func handleGitHubSyncTask(w http.ResponseWriter, r *http.Request, store *Store, 
 		}
 	}
 	result["task"] = t
+	// A dedicated sync endpoint must not answer 200 when the board did not update.
+	if !outcome.ok() {
+		result["ok"] = false
+		result["status"] = outcome.Status
+		writeJSONStatus(w, projectStatusHTTPCode(outcome.Status), result)
+		return
+	}
+	result["status"] = outcome.Status
 	writeJSON(w, result)
 }
 
@@ -350,7 +394,31 @@ func syncTaskGitHubAfterMove(store *Store, p Project, t Task) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_, _ = peerSetProjectItemStatus(ctx, p.OrganizationID, p.ConnectorID, ghProjectID, t.GithubProjectItemID, t.Status)
+		// The move response has already been written, so the failure cannot be
+		// returned — but it is persisted on the task and logged rather than dropped.
+		out, err := peerSetProjectItemStatus(ctx, p.OrganizationID, p.ConnectorID, ghProjectID, t.GithubProjectItemID, t.Status)
+		if err != nil {
+			_, status := projectSyncHTTPStatus(err)
+			recordProjectSyncFailure(store, p, t.SpecID, "move column", status, err.Error())
+			return
+		}
+		if synced, _ := out["status_synced"].(bool); !synced {
+			reason := strFromAny(out["status_note"])
+			if reason == "" {
+				reason = "ORA reported status_synced=false"
+			}
+			status := strFromAny(out["status"])
+			if status == "" {
+				status = projectSyncUpstreamError
+			}
+			recordProjectSyncFailure(store, p, t.SpecID, "move column", status, reason)
+			return
+		}
+		_, _ = store.MutateTask(p.ID, t.SpecID, func(tt *Task) {
+			now := nowUTC()
+			tt.GithubProjectSyncedAt = &now
+			tt.GithubProjectSyncError = ""
+		})
 	}()
 }
 

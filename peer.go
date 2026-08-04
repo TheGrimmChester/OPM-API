@@ -98,32 +98,28 @@ func peerListGitHubProjects(ctx context.Context, orgID, connectorID, ownerRepo s
 	return out, err
 }
 
+// peerUpsertProjectItem creates or refreshes a Projects v2 board item. It uses the
+// status-preserving transport, not PeerJSON: ORA reports why a title refresh failed
+// (missing_organization_projects, title_sync_unsupported, item_not_found) and
+// PeerJSON would collapse that into a truncated string.
 func peerUpsertProjectItem(ctx context.Context, orgID, connectorID, projectID, itemID, title, bodyText, statusHint string) (map[string]interface{}, error) {
-	cfg := peerORAConfigPM(orgID)
-	body := map[string]interface{}{
+	return peerPMCall(ctx, orgID, "/api/peer/scm/projects/items/upsert", map[string]interface{}{
 		"connector_id": connectorID,
 		"project_id":   projectID,
 		"item_id":      itemID,
 		"title":        title,
 		"body":         bodyText,
 		"status_hint":  statusHint,
-	}
-	var out map[string]interface{}
-	err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/peer/scm/projects/items/upsert", body, &out)
-	return out, err
+	})
 }
 
 func peerSetProjectItemStatus(ctx context.Context, orgID, connectorID, projectID, itemID, statusHint string) (map[string]interface{}, error) {
-	cfg := peerORAConfigPM(orgID)
-	body := map[string]interface{}{
+	return peerPMCall(ctx, orgID, "/api/peer/scm/projects/items/status", map[string]interface{}{
 		"connector_id": connectorID,
 		"project_id":   projectID,
 		"item_id":      itemID,
 		"status_hint":  statusHint,
-	}
-	var out map[string]interface{}
-	err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/peer/scm/projects/items/status", body, &out)
-	return out, err
+	})
 }
 
 // peerIssueFault is a failed ORA Issues call, carrying ORA's machine-readable
@@ -211,6 +207,13 @@ func peerIssueCall(ctx context.Context, orgID, path string, body map[string]inte
 		return nil, fmt.Errorf("ora returned a non-JSON body for %s", path)
 	}
 	return out, nil
+}
+
+// peerPMCall posts to an ORA Projects v2 peer endpoint. Same status-preserving
+// transport as peerIssueCall — the fault type is shared because the contract is:
+// non-2xx carries a machine-readable `status` that must survive.
+func peerPMCall(ctx context.Context, orgID, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	return peerIssueCall(ctx, orgID, path, body)
 }
 
 // peerGetIssue reads a single issue from the project's linked repo.
