@@ -11,7 +11,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o opm-api .
 
 FROM debian:bookworm-slim AS opm-api
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /root/
 COPY --from=builder /app/opm-api .
