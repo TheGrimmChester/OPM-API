@@ -89,7 +89,7 @@ func main() {
 		MaxHeaderBytes:    1 << 20,
 	}
 	log.Printf("opm-api listening on %s (data=%s)", addr, nz(dataDir, "~/.config/opm"))
-	_ = openjob.RunnerImage("opm", "task", envOr("OPM_RUNNER_TAG", "smoke"))
+	_ = openjob.RunnerImage("opm", "task", envOr("OPM_RUNNER_TAG", "nas"))
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("listen: %v", err)
 	}
@@ -99,14 +99,19 @@ func runOrchestrator() {
 	addr := envOr("ORCHESTRATOR_LISTEN_ADDR", ":8099")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		probe := probeRunnerSpawn()
 		writeJSON(w, map[string]interface{}{
 			"status":  "ok",
 			"service": "opm-orchestrator",
 			"version": buildVersion,
-			"runners": []string{openjob.RunnerImage("opm", "task", envOr("OPM_RUNNER_TAG", "smoke"))},
+			"runners": []string{probe.RunnerImage},
+			"spawn":   probe,
 		})
 	})
-	log.Printf("opm-orchestrator listening on %s (job scheduler stub; one container per task-automation run)", addr)
+	mux.HandleFunc("/api/spawn-probe", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, probeRunnerSpawn())
+	})
+	log.Printf("opm-orchestrator listening on %s (spawn probe + job scheduler stub)", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 

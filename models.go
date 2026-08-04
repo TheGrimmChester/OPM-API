@@ -90,6 +90,7 @@ type PlanSubtask struct {
 // TaskProgress tracks automation progress for a spec.
 type TaskProgress struct {
 	IsRunning         bool       `json:"is_running"`
+	Paused            bool       `json:"paused,omitempty"`
 	Action            string     `json:"action,omitempty"`
 	StartedAt         *time.Time `json:"started_at,omitempty"`
 	CompletedAt       *time.Time `json:"completed_at,omitempty"`
@@ -98,6 +99,7 @@ type TaskProgress struct {
 	SubtaskTotal      int        `json:"subtask_total"`
 	CurrentPhaseName  string     `json:"current_phase_name,omitempty"`
 	RunID             string     `json:"run_id,omitempty"`
+	StuckSubtaskID    string     `json:"stuck_subtask_id,omitempty"`
 }
 
 // ProjectStatus is the live automation status for a project.
