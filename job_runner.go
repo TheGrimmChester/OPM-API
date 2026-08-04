@@ -8,16 +8,18 @@ import (
 	"time"
 )
 
-// executeJob runs a builtin task-automation job that writes artifacts into
-// OPM_DATA_DIR. Containerized agent spawn remains follow-on work (orchestrator
-// has docker.sock; opm-runner-task is still a placeholder image).
+// executeJob runs a task-automation job that writes artifacts into OPM_DATA_DIR.
+// When spawnReady (docker CLI + daemon + opm-runner-task image), it docker-runs
+// one ephemeral runner container first, then applies shared artifact helpers.
+// On spawn failure or OPM_FORCE_BUILTIN=1, it falls back to builtin-only execution.
 func executeJob(store *Store, j Job) {
 	defer cleanupWorkspace(j.RunID)
 
+	execution := "builtin"
 	fail := func(msg string, err error) {
 		now := nowUTC()
 		j.State = "failed"
-		j.Execution = "builtin"
+		j.Execution = execution
 		if err != nil {
 			j.Error = err.Error()
 		}
@@ -28,36 +30,63 @@ func executeJob(store *Store, j Job) {
 
 	p, err := store.GetProject(j.ProjectID)
 	if err != nil {
-		fail("Builtin runner failed: project not found.", err)
+		fail("Job failed: project not found.", err)
 		return
 	}
 
 	time.Sleep(50 * time.Millisecond)
 	now := nowUTC()
 	j.State = "starting"
-	j.Execution = "builtin"
-	j.Message = "Starting builtin runner: preparing workspace."
+	j.Execution = execution
+	j.Message = "Starting job: preparing workspace."
 	j.StartedAt = &now
 	_ = store.UpdateJob(j.ProjectID, j)
 
 	workDir, err := prepareJobWorkspace(p, j.RunID)
 	if err != nil {
-		fail("Builtin runner failed while preparing workspace.", err)
+		fail("Job failed while preparing workspace.", err)
 		return
 	}
+	_ = workDir
 
 	j, err = store.GetJob(j.ProjectID, j.RunID)
 	if err != nil || j.State == "cancelled" {
 		return
 	}
-	j.State = "running"
-	j.Execution = "builtin"
-	j.Message = fmt.Sprintf("Running builtin action %s…", j.Action)
+
+	spawnNote := ""
+	if preferContainerSpawn() {
+		j.State = "running"
+		j.Execution = "container"
+		j.Message = fmt.Sprintf("Spawning runner container (%s) for %s…", nz(j.RunnerImage, runnerImageName()), j.Action)
+		pctStart := 10
+		j.ProgressPct = &pctStart
+		_ = store.UpdateJob(j.ProjectID, j)
+
+		out, serr := runTaskContainer(j)
+		if serr != nil {
+			spawnNote = fmt.Sprintf("Container spawn failed (%v); falling back to builtin. ", serr)
+			execution = "builtin"
+			j.Execution = execution
+			j.Message = spawnNote + fmt.Sprintf("Running builtin action %s…", j.Action)
+		} else {
+			execution = "container"
+			j.Execution = execution
+			spawnNote = "Container spawn OK"
+			if tip := strings.TrimSpace(out); tip != "" {
+				spawnNote += " (" + truncateRunes(strings.ReplaceAll(tip, "\n", " "), 120) + ")"
+			}
+			spawnNote += ". "
+			j.Message = spawnNote + fmt.Sprintf("Writing artifacts for %s…", j.Action)
+		}
+	} else {
+		j.State = "running"
+		j.Execution = "builtin"
+		j.Message = fmt.Sprintf("Running builtin action %s…", j.Action)
+	}
 	pct := 20
 	j.ProgressPct = &pct
 	_ = store.UpdateJob(j.ProjectID, j)
-
-	_ = workDir // workspace prepared for future containerized runners
 
 	if blocked, msg := taskPausedBlock(store, j); blocked {
 		fail(msg, fmt.Errorf("paused"))
@@ -96,17 +125,20 @@ func executeJob(store *Store, j Job) {
 		return
 	}
 	done := nowUTC()
+	if spawnNote != "" && !strings.HasPrefix(resultMsg, "Container") {
+		resultMsg = spawnNote + resultMsg
+	}
 	if err != nil {
 		j.State = "failed"
 		j.Error = err.Error()
 		j.Message = resultMsg
-		j.Execution = "builtin"
+		j.Execution = execution
 		j.CompletedAt = &done
 		_ = store.UpdateJob(j.ProjectID, j)
 		return
 	}
 	j.State = "completed"
-	j.Execution = "builtin"
+	j.Execution = execution
 	j.Message = resultMsg
 	j.CompletedAt = &done
 	pct = 100
