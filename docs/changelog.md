@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Feature: two-way GitHub Issue sync for tasks (`…/github/issues/{link,unlink,push,pull}` via ORA peer `scm:pm`). Push sends task title/description and the board column's issue state; pull mirrors issue state, assignee, labels and milestone, moving the task on the `done`/reopen boundary only. Title divergence is reported rather than resolved (`adoptTitle` opts in). Failures persist on the task as `githubIssueSyncError` and in the `github-issue-sync` spec log with a machine-readable `status`.
+
 - Feature: GitHub Milestones + Projects v2 bind/sync via ORA peer `scm:pm` (`…/github/milestones`, `…/github/projects`, task/roadmap fields, Status sync on board move).
 
 - Feature: Model-backed planning/implementation/review inside `opm-runner-task` (OpenAI-compatible `OPM_MODEL_*` env from compose; honest fallback + builtin artifacts when key missing).

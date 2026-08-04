@@ -32,6 +32,8 @@ func handleProjectGitHub(w http.ResponseWriter, r *http.Request, store *Store, p
 		handleGitHubMilestones(w, r, store, p, rest[1:])
 	case "projects":
 		handleGitHubProjects(w, r, store, p, rest[1:])
+	case "issues":
+		handleGitHubIssues(w, r, store, p, rest[1:])
 	case "sync-task":
 		if len(rest) < 2 {
 			writeError(w, 404, "not found")
