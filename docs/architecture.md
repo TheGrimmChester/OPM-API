@@ -5,8 +5,8 @@
 | Component | Image / binary | Role |
 |-----------|----------------|------|
 | `opm-api` | `opm-api` | HTTP control plane: GitHub-linked projects, board, tasks, roadmap, ideation, jobs |
-| `opm-orchestrator` | same binary, `orchestrator` command | Job lifecycle / reaper stub; spawns one runner container per job |
-| `opm-runner-task` | ephemeral | Task-automation sandbox (one container per run phase) |
+| `opm-orchestrator` | same binary, `orchestrator` command | Spawn probe + health; shares image with API (docker CLI + sock) |
+| `opm-runner-task` | ephemeral | Task-automation sandbox (one container per job phase) |
 | `opm-dashboard` | separate repo | Web dashboard (Vite SPA + nginx) — browser only; talks only to `opm-api` |
 
 ```mermaid
@@ -18,8 +18,9 @@ flowchart LR
   ORA -->|connectors + clone creds| API
   API --> FS[(OPM_DATA_DIR board/tasks)]
   API -->|tmp clone| TMP["/tmp/opm-jobs"]
-  API -->|enqueue| ORCH[opm-orchestrator]
-  ORCH -->|docker run| RUN[opm-runner-task]
+  API -->|docker run when spawnReady| RUN[opm-runner-task]
+  ORCH[opm-orchestrator] -->|spawn-probe| DOCKER[docker.sock]
+  API -->|docker.sock| DOCKER
 ```
 
 ## Projects = GitHub repositories

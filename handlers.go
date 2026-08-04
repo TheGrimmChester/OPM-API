@@ -433,8 +433,13 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 				writeError(w, 400, err.Error())
 				return
 			}
-			j.Execution = "builtin"
-			j.Message = "Queued (builtin): will write plan/spec/progress artifacts in-process."
+			if preferContainerSpawn() {
+				j.Execution = "container"
+				j.Message = "Queued: will docker-run " + runner + ", then write plan/spec/progress artifacts (builtin fallback on spawn failure)."
+			} else {
+				j.Execution = "builtin"
+				j.Message = "Queued (builtin): will write plan/spec/progress artifacts in-process (container spawn not ready; set docker CLI + sock + runner image, or OPM_FORCE_BUILTIN=1)."
+			}
 			_ = store.UpdateJob(projectID, j)
 			go executeJob(store, j)
 			writeJSON(w, j)

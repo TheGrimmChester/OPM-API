@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Feature: Containerized task spawn — docker CLI in `opm-api` image; jobs `docker run` `opm-runner-task` when spawnReady; builtin fallback via `OPM_FORCE_BUILTIN` or spawn failure; `/api/spawn-probe` returns `spawnReady: true` when docker + image work.
 - Auth: adopt Open-Auth-Go per-user project ACLs (`project_ids` / `EnforceProjectACL` on Gate middleware). Restricted JWTs get **403** on non-member `X-Project-ID`; role `admin` stays unrestricted. No second membership store — hub-minted claims only.
 - Builtin job runner writes `spec.md`, plan, progress, review/QA artifacts, changelog; `POST …/approve`, `GET …/spec|logs|actions`; `PUT …/changelog`.
 - Default runner tag `nas`.

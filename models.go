@@ -147,9 +147,10 @@ type Job struct {
 	Attempt     int        `json:"attempt"`
 	ProgressPct *int       `json:"progressPct,omitempty"`
 	RunnerImage string     `json:"runnerImage,omitempty"`
-	// Execution is "stub" when the API prepared a workspace + docker argv but did not exec a runner container.
+	// Execution is "container" when opm-runner-task was docker-run for this job,
+	// or "builtin" when the in-process executor ran (fallback / OPM_FORCE_BUILTIN).
 	Execution string `json:"execution,omitempty"`
-	// Message is operator-facing status (e.g. honest stub completion text).
+	// Message is operator-facing status (spawn + artifact outcome).
 	Message string `json:"message,omitempty"`
 }
 
