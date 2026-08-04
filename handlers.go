@@ -469,10 +469,15 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 			writeJSON(w, j)
 			return
 		}
+		wasActive := j.State == "queued" || j.State == "starting" || j.State == "running"
 		now := nowUTC()
 		j.State = "cancelled"
 		j.CompletedAt = &now
+		j.Message = "Cancelled by operator."
 		_ = store.UpdateJob(projectID, j)
+		if wasActive {
+			markJobCancelledStuck(store, j)
+		}
 		writeJSON(w, j)
 		return
 	}
