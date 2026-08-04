@@ -7,7 +7,8 @@ ENV GOSUMDB=sum.golang.org
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o opm-api .
+COPY cmd/ ./cmd/
+RUN CGO_ENABLED=0 GOOS=linux go build -o opm-api .  && CGO_ENABLED=0 GOOS=linux go build -o opm-runner ./cmd/opm-runner
 
 FROM docker:27-cli AS dockercli
 
@@ -28,12 +29,12 @@ ENV ORCHESTRATOR_LISTEN_ADDR=:8099
 CMD ["./opm-api", "orchestrator"]
 
 # Ephemeral task-automation runner — one container per job (not always-on).
+# Invokes OpenAI-compatible chat completions when OPM_MODEL_API_KEY is set.
 FROM debian:bookworm-slim AS opm-runner-task
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-COPY scripts/opm-runner-entrypoint.sh /usr/local/bin/opm-runner
-RUN chmod 755 /usr/local/bin/opm-runner
+COPY --from=builder /app/opm-runner /usr/local/bin/opm-runner
 USER 65532:65532
 WORKDIR /home/opm
 ENTRYPOINT ["/usr/local/bin/opm-runner"]
