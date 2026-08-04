@@ -80,10 +80,7 @@ func handleGitHubConnectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "PEER_ORA_URL not configured — GitHub connectors live in ORA")
 		return
 	}
-	orgID := strings.TrimSpace(r.URL.Query().Get("organizationId"))
-	if orgID == "" {
-		orgID = strings.TrimSpace(r.Header.Get("X-Organization-ID"))
-	}
+	orgID := resolveRequestOrg(r)
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	out, err := peerListConnectors(ctx, orgID)
@@ -107,10 +104,7 @@ func handleGitHubConnectorSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	connectorID := parts[0]
-	orgID := strings.TrimSpace(r.URL.Query().Get("organizationId"))
-	if orgID == "" {
-		orgID = strings.TrimSpace(r.Header.Get("X-Organization-ID"))
-	}
+	orgID := resolveRequestOrg(r)
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 	out, err := peerListConnectorRepos(ctx, orgID, connectorID)
@@ -122,6 +116,10 @@ func handleGitHubConnectorSub(w http.ResponseWriter, r *http.Request) {
 }
 
 func orgHeader(r *http.Request) string {
+	// Prefer resolveRequestOrg so auth-enforced defaults apply.
+	if org := resolveRequestOrg(r); org != "" {
+		return org
+	}
 	return opentenant.FromRequest(r).OrganizationID
 }
 
