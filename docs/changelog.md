@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Feature: GitHub Milestones + Projects v2 bind/sync via ORA peer `scm:pm` (`…/github/milestones`, `…/github/projects`, task/roadmap fields, Status sync on board move).
+
 - Feature: Model-backed planning/implementation/review inside `opm-runner-task` (OpenAI-compatible `OPM_MODEL_*` env from compose; honest fallback + builtin artifacts when key missing).
 
 - Feature: Containerized task spawn — docker CLI in `opm-api` image; jobs `docker run` `opm-runner-task` when spawnReady; builtin fallback via `OPM_FORCE_BUILTIN` or spawn failure; `/api/spawn-probe` returns `spawnReady: true` when docker + image work.

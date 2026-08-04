@@ -129,6 +129,8 @@ func handleProjectRoute(store *Store) http.HandlerFunc {
 			writeJSON(w, st)
 		case "jobs":
 			handleJobs(w, r, store, projectID, parts[2:])
+		case "github":
+			handleProjectGitHub(w, r, store, projectID, parts[2:])
 		default:
 			writeError(w, 404, "not found")
 		}
@@ -248,6 +250,9 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 		if err != nil {
 			writeError(w, 400, err.Error())
 			return
+		}
+		if p, perr := store.GetProjectForOrg(projectID, resolveRequestOrg(r)); perr == nil {
+			syncTaskGitHubAfterMove(store, p, t)
 		}
 		writeJSON(w, t)
 	case "approve":
