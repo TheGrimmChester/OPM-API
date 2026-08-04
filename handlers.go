@@ -338,6 +338,10 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 			return
 		}
 		writeJSON(w, actions)
+	case "changes":
+		handleTaskChanges(w, r, store, projectID, specID)
+	case "deliver":
+		handleTaskDeliver(w, r, store, projectID, specID)
 	default:
 		writeError(w, 404, "not found")
 	}

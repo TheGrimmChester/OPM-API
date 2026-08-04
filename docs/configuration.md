@@ -17,6 +17,11 @@
 | `OPM_MODEL_PLANNING` | empty | Optional override for planning jobs. |
 | `OPM_MODEL_CODING` | empty | Optional override for implementation jobs. |
 | `OPM_MODEL_REVIEW` | empty | Optional override for review jobs. |
+| `OPM_DELIVERY_BRANCH_PREFIX` | `opm` | Branch namespace for delivered task branches (`<prefix>/<specId>`). Empty means no prefix. |
+| `OPM_DELIVERY_MAX_FILES` | `50` | Maximum files a single delivery may commit. |
+| `OPM_DELIVERY_MAX_BYTES` | `2097152` | Maximum total change-set bytes a single delivery may commit. |
+| `OPM_GIT_AUTHOR_NAME` | `opm-api` | Committer name on delivery commits. |
+| `OPM_GIT_AUTHOR_EMAIL` | `opm-api@localhost` | Committer email on delivery commits. |
 | `OPM_RUNNER_NETWORK` | `bridge` | Docker network used when a model key is present (replaces hardened `none` so the runner can reach the model API). |
 | `JWT_SECRET` | ephemeral | User JWT secret (≥32 bytes when auth required); share with hub in co-deployed mode |
 | `AUTH_MODE` | — | `codeployed` when hub issues tokens |

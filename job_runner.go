@@ -47,7 +47,6 @@ func executeJob(store *Store, j Job) {
 		fail("Job failed while preparing workspace.", err)
 		return
 	}
-	_ = workDir
 
 	j, err = store.GetJob(j.ProjectID, j.RunID)
 	if err != nil || j.State == "cancelled" {
@@ -65,7 +64,7 @@ func executeJob(store *Store, j Job) {
 		j.ProgressPct = &pctStart
 		_ = store.UpdateJob(j.ProjectID, j)
 
-		cout, serr := runTaskContainer(store, j)
+		cout, serr := runTaskContainer(store, j, workDir)
 		if serr != nil {
 			spawnNote = fmt.Sprintf("Container spawn failed (%v); falling back to builtin. ", serr)
 			execution = "builtin"
@@ -372,10 +371,18 @@ doneOne:
 	})
 
 	if done >= total {
-		return fmt.Sprintf("Implementation complete (builtin): finished subtask %s; all %d subtasks done; moved to review.", completedID, total), nil
+		return fmt.Sprintf("Implementation complete (builtin): finished subtask %s; all %d subtasks done; moved to review. %s",
+			completedID, total, builtinNoCodeNotice), nil
 	}
-	return fmt.Sprintf("Implementation step (builtin): completed subtask %s (%d/%d). Re-enqueue to continue.", completedID, done, total), nil
+	return fmt.Sprintf("Implementation step (builtin): completed subtask %s (%d/%d). Re-enqueue to continue. %s",
+		completedID, done, total, builtinNoCodeNotice), nil
 }
+
+// builtinNoCodeNotice is the honest label on the builtin implementation path. The
+// builtin runner advances plan state and notes only — it writes no source and
+// records no change set, so `deliver` will correctly answer no_changes_produced.
+const builtinNoCodeNotice = "No source changes were written: the builtin path tracks plan progress only. " +
+	"Configure a model runner (OPM_MODEL_API_KEY) for the runner to produce file changes to deliver."
 
 func builtinReview(store *Store, j Job) (string, error) {
 	if j.SpecID == "" {

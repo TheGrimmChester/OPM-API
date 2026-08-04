@@ -121,18 +121,43 @@ func applyModelImplementation(store *Store, j Job, rr RunnerResult) (string, err
 		_ = store.withProject(j.ProjectID, func(p Project) error {
 			notePath := filepath.Join(store.projectDir(p), "specs", j.SpecID, "IMPLEMENTATION_NOTES.md")
 			prev, _ := os.ReadFile(notePath)
-			line := fmt.Sprintf("\n### Model notes (%s, %s)\n\n%s\n",
+			line := fmt.Sprintf("\n### Runner notes (%s, %s)\n\n%s\n",
 				nowUTC().Format(time.RFC3339), nz(rr.Model, "model"), note)
 			return os.WriteFile(notePath, append(prev, []byte(line)...), 0o644)
 		})
 		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
-			fmt.Sprintf("[%s] model implementation notes (%s): %s\n", j.RunID, nz(rr.Model, "?"), truncateRunes(note, 400)))
+			fmt.Sprintf("[%s] runner implementation notes (%s): %s\n", j.RunID, nz(rr.Model, "?"), truncateRunes(note, 400)))
 	}
 	msg = strings.Replace(msg, "(builtin)", "(model/"+nz(rr.Model, "model")+")", 1)
 	if !strings.Contains(msg, "model/") {
 		msg = "Model enrichment applied. " + msg
 	}
-	return msg, nil
+	return msg + " " + recordImplementationChangeSet(store, j, rr), nil
+}
+
+// recordImplementationChangeSet persists the runner's file changes so `deliver`
+// can commit them, and returns the operator-facing sentence about what was
+// actually produced. It never claims code was written when it was not.
+func recordImplementationChangeSet(store *Store, j Job, rr RunnerResult) string {
+	if j.SpecID == "" {
+		return ""
+	}
+	cs := changeSetFromRunner(j.RunID, rr)
+	if len(cs.Files) == 0 {
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+			fmt.Sprintf("[%s] no source changes produced — nothing to deliver (%s)\n",
+				j.RunID, nz(cs.Note, "runner returned no files")))
+		return "No source changes were produced, so there is nothing to deliver yet."
+	}
+	if err := store.PutChangeSet(j.ProjectID, j.SpecID, cs); err != nil {
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+			fmt.Sprintf("[%s] failed to record %d file change(s): %v\n", j.RunID, len(cs.Files), err))
+		return fmt.Sprintf("Produced %d file change(s) but recording them failed: %v.", len(cs.Files), err)
+	}
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+		fmt.Sprintf("[%s] recorded %d file change(s) for delivery: %s\n",
+			j.RunID, len(cs.Files), strings.Join(cs.paths(), ", ")))
+	return fmt.Sprintf("Recorded %d file change(s) ready to deliver (POST …/deliver).", len(cs.Files))
 }
 
 func applyModelReview(store *Store, j Job, rr RunnerResult) (string, error) {

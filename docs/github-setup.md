@@ -140,11 +140,35 @@ That last row is why a refresh cannot drag a task out of `human_review`.
 
 | Feature | Required permission |
 |---------|---------------------|
+| Clone a repo for a job | **Contents** read, **Metadata** read |
 | Milestones | **Issues** read/write |
 | Issue link / push / pull | **Issues** read/write |
-| Projects v2 — list, item sync, title refresh, Status on move | **Organization permissions › Projects: Read and write** (`organization_projects: write`) |
+| Projects v2 — list, item sync, title refresh, Status on move | **Organization permissions › Projects: Read and write** (`organization_projects: write`); without it milestone bind and Issue sync still work |
+| Push a delivery branch | **Contents** read **and write**, **Metadata** read |
+| Open a delivery pull request | **Pull requests** read **and write** (plus Contents write, Metadata read) |
 
-Issue sync needs no permission beyond the Issues read/write that milestones already require, so an install that can bind milestones can sync issues. PAT connectors need equivalent classic or fine-grained scopes (`repo` / Issues + Projects).
+Issue sync needs no permission beyond the Issues read/write that milestones already require, so an install that can bind milestones can sync issues.
+
+**Workflows is never requested.** A delivery therefore cannot modify
+`.github/workflows/`, and OPM refuses such paths before committing rather than
+letting the push fail.
+
+PAT connectors need equivalent classic or fine-grained scopes (`repo` / Issues +
+Projects; Contents and Pull requests read/write for delivery). ORA refuses PAT
+writes unless `OPA_AGENTS_ALLOW_PAT_WRITE=1`, so a GitHub App connector is the
+supported path for delivery.
+
+## 6. Deliver a task as a pull request
+
+Once an implementation run has recorded file changes (which requires a model
+runner — see `OPM_MODEL_API_KEY` in [configuration.md](configuration.md)), the
+task detail **Delivery** section lists them and offers **Deliver as pull
+request**. That commits them on `opm/<specId>`, pushes the branch, and opens a
+pull request; the board then shows a **PR #n** badge on the card.
+
+With no model runner configured, the builtin path advances plan state and writes
+no source code, so Delivery reports that there is nothing to deliver instead of
+implying code was shipped.
 
 **The current App installation does not grant `organization_projects`.** Everything Projects v2 therefore
 returns `missing_organization_projects` — with the permission named, rather than failing quietly — while
@@ -165,6 +189,12 @@ organization's settings. The live board update can only be proved after that is 
 | `missing_issues_permission` on issue link/push/pull | App lacks Issues write | Grant **Issues** read/write and re-accept the install; response lists `missing` |
 | `issue_not_found` on pull | Issue deleted or transferred | Unlink and attach the new number; the link is kept until you do |
 | Task shows a sync error badge | Last push/pull failed | Read `githubIssueSyncError` on the task or the `github-issue-sync` spec log |
+| `no_changes_produced` on deliver | No run recorded file changes (builtin path, or the model returned none) | Set `OPM_MODEL_API_KEY` and re-run implementation; check the task's `delivery` log |
+| `missing_contents_permission` on deliver | App cannot push | Grant **Contents: Read and write**, re-accept the installation permissions |
+| `missing_pull_requests_permission` on deliver | App cannot open pull requests | Grant **Pull requests: Read and write**, re-accept the installation permissions |
+| `push_rejected` on deliver | The delivery branch already exists on the remote with different commits | Re-deliver with a different `branch` in the request body |
+| `unsafe_path` on deliver | A change targeted `..`, an absolute path, `.git/` or `.github/workflows/` | Expected — refused by design; fix the run that produced it |
+| `missing scope` on deliver | ORA image without the `scm:pr` peer routes | Redeploy `ora-api:nas` + `opm-api:nas` together |
 | Job fails: `git: executable file not found` | `opm-api` image missing git | Rebuild `opm-api:nas` with git in runtime stage |
 | Hub org list shows only `default-org` | `PEER_OPA_URL` unset | Point OPM at hub; confirm tenancy API |
 
@@ -173,4 +203,5 @@ organization's settings. The live board update can only be proved after that is 
 - Dashboard talks **only** to `opm-api`; never call ORA or Hub directly from the browser.
 - Clone tokens for task jobs are fetched from ORA per request and discarded with ephemeral workspaces.
 - Milestone/Project/Issue sync uses short-lived service JWTs (`scm:pm`); GitHub secrets never enter OPM storage.
+- Code delivery uses the separate, narrower `scm:pr` scope for the push credential and the pull-request call. The credential is per-request, reaches git only through `GIT_ASKPASS`, and is never written to disk or logs.
 - See [security.md](security.md) and [interop.md](interop.md) for service JWT and tenancy boundaries.
