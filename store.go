@@ -565,6 +565,184 @@ func (s *Store) DeleteTask(projectID, specID string) error {
 	})
 }
 
+// ApproveForCoding moves a task from human_review → queue after human gate.
+func (s *Store) ApproveForCoding(projectID, specID string) (Task, error) {
+	t, err := s.GetTask(projectID, specID)
+	if err != nil {
+		return Task{}, err
+	}
+	if t.Status != "human_review" {
+		return Task{}, fmt.Errorf("task must be in human_review (got %q)", t.Status)
+	}
+	moved, err := s.MoveTask(projectID, specID, "queue")
+	if err != nil {
+		return Task{}, err
+	}
+	_ = s.withProject(projectID, func(p Project) error {
+		state := map[string]interface{}{
+			"approved":    true,
+			"approved_by": "user",
+			"approved_at": nowUTC().Format(time.RFC3339),
+		}
+		return s.writeJSON(filepath.Join(s.projectDir(p), "specs", specID, "review_state.json"), state)
+	})
+	return moved, nil
+}
+
+func (s *Store) GetSpecMarkdown(projectID, specID string) (string, error) {
+	var content string
+	err := s.withProject(projectID, func(p Project) error {
+		b, err := os.ReadFile(filepath.Join(s.projectDir(p), "specs", specID, "spec.md"))
+		if err != nil {
+			return err
+		}
+		content = string(b)
+		return nil
+	})
+	return content, err
+}
+
+// TaskValidActions lists which run actions the board/detail UI may offer.
+type TaskValidActions struct {
+	Planning           bool `json:"planning"`
+	Implementation     bool `json:"implementation"`
+	Review             bool `json:"review"`
+	QaFix              bool `json:"qaFix"`
+	Approve            bool `json:"approve"`
+	FollowupPlanning   bool `json:"followupPlanning"`
+	GenerateChangelog  bool `json:"generateChangelog"`
+}
+
+func (s *Store) GetTaskValidActions(projectID, specID string) (TaskValidActions, error) {
+	var out TaskValidActions
+	t, err := s.GetTask(projectID, specID)
+	if err != nil {
+		return out, err
+	}
+	plan, _ := s.GetPlan(projectID, specID)
+	hasPlan := len(plan.Phases) > 0 || plan.PlanStatus != "" && plan.PlanStatus != "drafted"
+	approved := true
+	if t.RequireReviewBeforeCoding {
+		approved = false
+		_ = s.withProject(projectID, func(p Project) error {
+			var st map[string]interface{}
+			path := filepath.Join(s.projectDir(p), "specs", specID, "review_state.json")
+			if err := s.readJSON(path, &st); err != nil {
+				return nil
+			}
+			if v, ok := st["approved"].(bool); ok && v {
+				approved = true
+			}
+			return nil
+		})
+	}
+	status := t.Status
+	out.Planning = status == "backlog" || status == "queue" || status == "human_review"
+	out.Implementation = (status == "queue" || status == "in_progress") && approved
+	out.Review = status == "in_progress" || status == "review"
+	out.QaFix = status == "review" || status == "in_progress"
+	out.Approve = status == "human_review"
+	out.FollowupPlanning = hasPlan && (status == "queue" || status == "in_progress" || status == "review" || status == "done")
+	out.GenerateChangelog = true
+	return out, nil
+}
+
+func (s *Store) PutPlan(projectID, specID string, plan ImplementationPlan) error {
+	return s.withProject(projectID, func(p Project) error {
+		return s.writeJSON(filepath.Join(s.projectDir(p), "specs", specID, "implementation_plan.json"), plan)
+	})
+}
+
+func (s *Store) PutProgress(projectID, specID string, prog TaskProgress) error {
+	return s.withProject(projectID, func(p Project) error {
+		return s.writeJSON(filepath.Join(s.projectDir(p), "specs", specID, "progress.json"), prog)
+	})
+}
+
+func (s *Store) PutSpecMarkdown(projectID, specID, content string) error {
+	return s.withProject(projectID, func(p Project) error {
+		return os.WriteFile(filepath.Join(s.projectDir(p), "specs", specID, "spec.md"), []byte(content), 0o644)
+	})
+}
+
+func (s *Store) PutSpecFile(projectID, specID, name, content string) error {
+	name = filepath.Base(name)
+	if name == "" || name == "." || name == ".." {
+		return fmt.Errorf("invalid file name")
+	}
+	return s.withProject(projectID, func(p Project) error {
+		return os.WriteFile(filepath.Join(s.projectDir(p), "specs", specID, name), []byte(content), 0o644)
+	})
+}
+
+func (s *Store) PutChangelog(projectID, content string) error {
+	return s.withProject(projectID, func(p Project) error {
+		return os.WriteFile(filepath.Join(s.projectDir(p), "changelog.md"), []byte(content), 0o644)
+	})
+}
+
+func (s *Store) AppendSpecLog(projectID, specID, phase, line string) error {
+	return s.withProject(projectID, func(p Project) error {
+		dir := filepath.Join(s.projectDir(p), "specs", specID, "logs")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		path := filepath.Join(dir, phase+".log")
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = f.WriteString(line)
+		return err
+	})
+}
+
+func (s *Store) AppendProjectLog(projectID, name, line string) error {
+	name = filepath.Base(name)
+	return s.withProject(projectID, func(p Project) error {
+		dir := filepath.Join(s.projectDir(p), "logs")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		path := filepath.Join(dir, name+".log")
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = f.WriteString(line)
+		return err
+	})
+}
+
+func (s *Store) GetSpecLogs(projectID, specID string) (map[string]string, error) {
+	out := map[string]string{}
+	err := s.withProject(projectID, func(p Project) error {
+		dir := filepath.Join(s.projectDir(p), "specs", specID, "logs")
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".log") {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				continue
+			}
+			key := strings.TrimSuffix(e.Name(), ".log")
+			out[key] = string(b)
+		}
+		return nil
+	})
+	return out, err
+}
+
 func (s *Store) GetPlan(projectID, specID string) (ImplementationPlan, error) {
 	var plan ImplementationPlan
 	err := s.withProject(projectID, func(p Project) error {
