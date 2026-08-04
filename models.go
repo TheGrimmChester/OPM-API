@@ -51,8 +51,14 @@ type Task struct {
 	GithubMilestoneTitle  string `json:"githubMilestoneTitle,omitempty"`
 	GithubMilestoneURL    string `json:"githubMilestoneUrl,omitempty"`
 	// GitHub Projects v2 item bind.
-	GithubProjectID     string `json:"githubProjectId,omitempty"`
-	GithubProjectItemID string `json:"githubProjectItemId,omitempty"`
+	GithubProjectID       string     `json:"githubProjectId,omitempty"`
+	GithubProjectItemID   string     `json:"githubProjectItemId,omitempty"`
+	GithubProjectSyncedAt *time.Time `json:"githubProjectSyncedAt,omitempty"`
+	// GithubProjectSyncError holds the last board-sync failure reason, including a
+	// title refresh that ORA accepted but could not apply. Cleared on the next
+	// success so the UI never shows a stale error, and never blanked on failure so
+	// a board that no longer matches cannot masquerade as synced.
+	GithubProjectSyncError string `json:"githubProjectSyncError,omitempty"`
 	// GitHub Issue link in the project's linked repo (via ORA peer scm:pm).
 	// GithubIssueState/Title/Assignee/Labels mirror GitHub and are refreshed by
 	// pull; they are never treated as the source of truth for OPM fields.
