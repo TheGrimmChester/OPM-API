@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	opentenant "github.com/TheGrimmChester/open-tenant-go"
 	"net/http"
 	"strings"
 	"time"
@@ -121,7 +122,7 @@ func handleGitHubConnectorSub(w http.ResponseWriter, r *http.Request) {
 }
 
 func orgHeader(r *http.Request) string {
-	return strings.TrimSpace(r.Header.Get("X-Organization-ID"))
+	return opentenant.FromRequest(r).OrganizationID
 }
 
 // decodeLinkProjectBody parses POST /api/projects for GitHub link payloads.
