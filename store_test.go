@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	opentenant "github.com/TheGrimmChester/open-tenant-go"
@@ -67,6 +68,32 @@ func TestStoreLifecycle(t *testing.T) {
 	wantDir := filepath.Join(data, "projects", p.ID)
 	if store.projectDir(p) != wantDir {
 		t.Fatalf("projectDir=%s want %s", store.projectDir(p), wantDir)
+	}
+
+	movedHR, err := store.MoveTask(p.ID, task.SpecID, "human_review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if movedHR.Status != "human_review" {
+		t.Fatalf("status=%s", movedHR.Status)
+	}
+	approved, err := store.ApproveForCoding(p.ID, task.SpecID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.Status != "queue" {
+		t.Fatalf("approved status=%s", approved.Status)
+	}
+	actions, err := store.GetTaskValidActions(p.ID, task.SpecID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !actions.Planning || !actions.Implementation {
+		t.Fatalf("actions=%+v", actions)
+	}
+	md, err := store.GetSpecMarkdown(p.ID, task.SpecID)
+	if err != nil || !strings.Contains(md, "First feature") {
+		t.Fatalf("spec md=%q err=%v", md, err)
 	}
 }
 

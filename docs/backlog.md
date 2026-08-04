@@ -1,28 +1,29 @@
 # Remaining backlog
 
-Short gap list after the PM CRUD dashboard ship (ideation/roadmap write UI, board edit/delete, jobs specId + cancel). Update as items land.
+Short gap list after builtin runners, task detail, approve-for-coding, and changelog save.
 
 ## Working today (NAS)
 
 - Hub-auth via dashboard `/hub-auth` proxy; JWT accepted by `opm-api`
 - Hub org discovery + ORA GitHub connectors / repo list / project link
-- Board task create / move / edit / delete
-- Ideation create + promote-to-task; roadmap phase/feature create
-- Jobs enqueue (optional `specId`), cancel active runs; `run-planning` completes after git + clone-credentials fixes
-- Changelog read; project status read
+- Board task create / move / edit / delete; require-review checkbox; approve-for-coding
+- Task detail drawer: plan / progress / spec / logs + run actions
+- Ideation create/edit/delete + promote; roadmap phase/feature create/edit/delete
+- **Builtin job runner** writes real artifacts: `run-planning` → `spec.md` + plan; `run-implementation` subtask loop; `run-review` / `run-qa-fix`; `generate-changelog`
+- Changelog generate + edit/save (`PUT …/changelog`)
+- Jobs enqueue/cancel with `execution: "builtin"` + operator `message`
 
 ## Highest remaining gaps
 
 | Area | Gap | Notes |
 |------|-----|-------|
-| Jobs | Real runner spawn | `stubRunJob` prepares workspace + Docker argv but does not exec the container; planning “completes” without model output |
-| Plans | Plan / progress UI | API has `GET …/tasks/{id}/plan` and `…/progress`; dashboard does not surface them |
-| Roadmap / ideation | Edit & delete | Create + promote only; no inline edit/delete of phases, features, or ideas |
-| Board | Drag-and-drop | Column moves are button-based; no DnD |
-| Changelog | Write / generate UX | `generate-changelog` job action exists; changelog page is read-only markdown |
-| Multi-tenant headers | Project header | Org id now attached from active project; `X-Project-ID` not yet set on all calls |
-| Orchestrator | Scheduler | `opm-orchestrator` health only — no reaper / spawn loop yet |
-| Docs / E2E | Automated NAS suite | Manual curl + UI verification; no committed family harness for OPM CRUD |
+| Jobs | Agent-in-container spawn | Builtin is real artifact E2E; `opm-runner-task` still placeholder; orchestrator has docker.sock |
+| Jobs | Higher-quality planning/impl | Builtin is heuristic until model-backed runners land |
+| Board | Drag-and-drop | Button moves + action buttons; no DnD |
+| Roadmap / ideation | Agent runs | Actions enqueue but only placeholder logs |
+| Pipeline | Pause / resume / skip-to-phase | Missing |
+| Follow-up planning | UI enqueue | API/builtin supports `run-followup-planning` |
+| Docs / E2E | Automated NAS suite | Manual curl + UI verification |
 
 ## Explicit non-goals (for now)
 

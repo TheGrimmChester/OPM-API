@@ -145,6 +145,10 @@ type Job struct {
 	Attempt     int        `json:"attempt"`
 	ProgressPct *int       `json:"progressPct,omitempty"`
 	RunnerImage string     `json:"runnerImage,omitempty"`
+	// Execution is "stub" when the API prepared a workspace + docker argv but did not exec a runner container.
+	Execution string `json:"execution,omitempty"`
+	// Message is operator-facing status (e.g. honest stub completion text).
+	Message string `json:"message,omitempty"`
 }
 
 // Roadmap document.
