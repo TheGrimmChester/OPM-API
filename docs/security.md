@@ -2,7 +2,7 @@
 
 ## User auth
 
-When `OPA_AUTH_REQUIRED` is enabled, control-plane routes require a user JWT (`Authorization: Bearer` or cookie). Shared `JWT_SECRET` with OPA hub is typical when co-deployed.
+When `OPA_AUTH_REQUIRED` is enabled, control-plane routes require a user JWT (`Authorization: Bearer` or cookie) via **Open-Auth-Go** middleware. Shared `JWT_SECRET` with OPA hub is typical when co-deployed. OPM does not issue local login tokens.
 
 ## Service auth
 
