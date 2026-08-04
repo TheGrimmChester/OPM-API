@@ -2,13 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	openclient "github.com/TheGrimmChester/open-client-go"
 )
@@ -58,34 +55,12 @@ func peerCloneCredentials(ctx context.Context, orgID, connectorID, ownerRepo str
 }
 
 func peerHubGET(ctx context.Context, path string) (map[string]interface{}, error) {
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("PEER_OPA_URL")), "/")
-	if base == "" {
+	if !peerOPAConfigured() {
 		return nil, openclient.ErrPeerUnavailable
 	}
-	// Prefer service JWT when secret is configured; hub tenancy routes are open.
 	cfg := peerOPAConfig("health:read")
 	var out map[string]interface{}
-	if err := openclient.PeerJSON(ctx, cfg, http.MethodGet, path, nil, &out); err == nil {
-		return out, nil
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/"+strings.TrimLeft(path, "/"), nil)
-	if err != nil {
-		return nil, err
-	}
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("hub %s: %s", path, resp.Status)
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
+	if err := openclient.PeerJSON(ctx, cfg, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
