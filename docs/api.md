@@ -82,8 +82,82 @@ Issue sync adds no permission beyond the `issues: write` milestones already need
 - `GET /api/projects/{id}/tasks/{specId}/spec` → `{ markdown }`
 - `GET /api/projects/{id}/tasks/{specId}/logs` → `{ logs: { planning?, implementation?, validation? } }`
 - `GET /api/projects/{id}/tasks/{specId}/actions` → valid run actions (`planning`, `implementation`, `review`, `qaFix`, `approve`, …)
+- `GET /api/projects/{id}/tasks/{specId}/changes` → the pending change set summary (paths + modes, never file bodies)
+- `POST /api/projects/{id}/tasks/{specId}/deliver` → commit + push + open a pull request (see **Code delivery**)
 
 Columns: `backlog`, `queue`, `in_progress`, `review`, `human_review`, `done`.
+
+## Code delivery
+
+`POST /api/projects/{id}/tasks/{specId}/deliver` turns the change set an
+implementation run recorded into real repository history:
+
+1. prepare an ephemeral clone of the linked repo (ORA `scm:clone` credentials)
+2. apply the recorded `files[]` into that workspace
+3. commit them on a task branch, staging **only** the paths that applied
+4. push the branch with a short-lived Contents-write credential (ORA `scm:pr`)
+5. open the pull request (ORA `scm:pr`)
+
+Optional body: `{ "branch": "...", "base": "...", "draft": false }`. `branch`
+defaults to `<OPM_DELIVERY_BRANCH_PREFIX>/<specId>` (prefix default `opm`) and is
+sanitized; `base` defaults to the project's default branch.
+
+Success (`200`):
+
+```json
+{
+  "ok": true, "status": "delivered", "specId": "001-add-login",
+  "branch": "opm/001-add-login", "commitSha": "…",
+  "prNumber": 42, "prUrl": "https://github.com/acme/demo/pull/42",
+  "prState": "open", "files": ["src/login.go", "src/login_test.go"]
+}
+```
+
+`deliveryBranch`, `deliveryCommitSha`, `deliveryFiles`, `deliveredAt`,
+`prNumber`, `prUrl`, `prState`, `deliveryStatus` and `deliveryError` are
+persisted on the task and returned by `GET …/tasks/{specId}`.
+
+### Failure is explicit
+
+Every failure persists `deliveryStatus` + `deliveryError` on the task, appends a
+line to the task's `delivery` spec log, and answers with a machine-readable
+`status`. **A run that produced no file changes never reports success.**
+
+| `status` | HTTP | Meaning |
+|----------|------|---------|
+| `delivered` | 200 | Branch pushed and pull request open |
+| `no_changes_produced` | 409 | No run recorded file changes — nothing to deliver |
+| `push_rejected` | 409 | The branch exists on the remote with different commits; retry with a new `branch` |
+| `not_linked_repo` | 400 | The project has no `ownerRepo` + `connectorId` |
+| `unsafe_path` | 400 | A change targeted `..`, an absolute path, `.git/`, or `.github/workflows/` |
+| `change_set_too_large` | 400 | Over `OPM_DELIVERY_MAX_FILES` / `OPM_DELIVERY_MAX_BYTES` |
+| `task_not_found` | 404 | Unknown `specId` |
+| `missing_contents_permission` | 403 | The installation cannot push |
+| `missing_pull_requests_permission` | 403 | The installation cannot open pull requests |
+| `apply_failed` | 422 | A patch did not apply against the real source |
+| `git_failed` / `push_failed` / `workspace_unavailable` | 422 | Branch, commit, push or clone failed |
+| `peer_not_configured` | 503 | `PEER_ORA_URL` unset — credentials and pull requests live in ORA |
+| `upstream_error` | 502 | Anything else ORA or GitHub returned |
+
+Permission failures relay ORA's `detail` and `missing` permission list.
+
+### Where the change set comes from
+
+`GET …/tasks/{specId}/changes` reports what is waiting:
+
+```json
+{
+  "deliverable": true, "fileCount": 2, "commitMessage": "Add login form",
+  "source": "model", "model": "…", "runId": "…",
+  "files": [{"path": "src/login.go", "mode": "write", "bytes": 812}]
+}
+```
+
+`mode` is `write` (full new body), `patch` (unified diff) or `delete`. Only an
+implementation run with a model runner configured records a change set; the
+builtin path advances plan state and writes no code, so `deliverable` stays
+`false` and `deliver` answers `no_changes_produced`. The change set is consumed
+on a successful delivery so the same work cannot be committed twice.
 
 ## Roadmap / ideation / changelog
 

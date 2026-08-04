@@ -19,6 +19,12 @@ type RunnerResult struct {
 	ImplementationNotes string `json:"implementationNotes,omitempty"`
 	CompletedSubtaskID  string `json:"completedSubtaskId,omitempty"`
 
+	// Files are the source changes the runner produced against the mounted repo,
+	// and CommitMessage the message to commit them under. They are the only thing
+	// that can become a commit — notes and excerpts never are.
+	Files         []FileChange `json:"files,omitempty"`
+	CommitMessage string       `json:"commitMessage,omitempty"`
+
 	ReviewMarkdown string `json:"reviewMarkdown,omitempty"`
 	ReviewPass     *bool  `json:"reviewPass,omitempty"`
 
