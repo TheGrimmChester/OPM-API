@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Docs: tenant headers required when auth is on (not optional); NAS curl examples in interop/security/api.
 - Auth via Open-Auth-Go `Gate` (delete local `auth.go` duplicate; validate-only, no local login routes).
 
 ## 0.2.0
