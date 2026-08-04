@@ -63,6 +63,6 @@ Columns: `backlog`, `queue`, `in_progress`, `review`, `human_review`, `done`.
 - `GET /api/projects/{id}/jobs/{runId}`
 - `POST /api/projects/{id}/jobs/{runId}/cancel`
 
-Job actions include: `run-planning`, `run-implementation`, `run-review`, `run-qa-fix`, `run-followup-planning`, `run-roadmap-discovery`, `run-roadmap-features`, `run-ideation`, `generate-changelog`.
+Job actions include: `run-planning`, `run-implementation`, `run-review`, `run-qa-fix`, `run-followup-planning`, `recover-subtask`, `mark-stuck`, `pause-task`, `resume-task`, `run-roadmap-discovery`, `run-roadmap-features`, `run-ideation`, `generate-changelog`.
 
-Jobs prepare an ephemeral clone (via ORA clone credentials when configured), then run the **builtin** executor (`execution: "builtin"`) which writes real `spec.md` / `implementation_plan.json` / `progress.json` / review artifacts / changelog. Containerized agent spawn (orchestrator + `opm-runner-task:nas`) remains follow-on — the runner image is still a placeholder.
+Jobs prepare an ephemeral clone (via ORA clone credentials when configured), then run the **builtin** executor (`execution: "builtin"`) which writes real `spec.md` / `implementation_plan.json` / `progress.json` / review artifacts / changelog. Orchestrator `/api/health` and `/api/spawn-probe` report docker CLI/daemon + `opm-runner-task:nas` image presence (`spawnReady` stays false until real container agent spawn lands).
