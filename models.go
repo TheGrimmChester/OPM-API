@@ -53,8 +53,22 @@ type Task struct {
 	// GitHub Projects v2 item bind.
 	GithubProjectID     string `json:"githubProjectId,omitempty"`
 	GithubProjectItemID string `json:"githubProjectItemId,omitempty"`
-	CreatedAt           time.Time `json:"createdAt"`
-	UpdatedAt           time.Time `json:"updatedAt"`
+	// GitHub Issue link in the project's linked repo (via ORA peer scm:pm).
+	// GithubIssueState/Title/Assignee/Labels mirror GitHub and are refreshed by
+	// pull; they are never treated as the source of truth for OPM fields.
+	GithubIssueNumber    int        `json:"githubIssueNumber,omitempty"`
+	GithubIssueURL       string     `json:"githubIssueUrl,omitempty"`
+	GithubIssueState     string     `json:"githubIssueState,omitempty"` // open | closed
+	GithubIssueTitle     string     `json:"githubIssueTitle,omitempty"`
+	GithubIssueAssignee  string     `json:"githubIssueAssignee,omitempty"`
+	GithubIssueLabels    []string   `json:"githubIssueLabels,omitempty"`
+	GithubIssueSyncedAt  *time.Time `json:"githubIssueSyncedAt,omitempty"`
+	// GithubIssueSyncError holds the last push/pull failure reason. It is cleared
+	// on the next success so the UI never shows a stale error, and never blanked
+	// on failure so a broken link cannot masquerade as healthy.
+	GithubIssueSyncError string    `json:"githubIssueSyncError,omitempty"`
+	CreatedAt            time.Time `json:"createdAt"`
+	UpdatedAt            time.Time `json:"updatedAt"`
 }
 
 // Board maps column id → ordered spec ids.
@@ -163,6 +177,10 @@ type Job struct {
 	Execution string `json:"execution,omitempty"`
 	// Message is operator-facing status (spawn + artifact outcome).
 	Message string `json:"message,omitempty"`
+	// TargetPhase is 1-based plan phase number for skip-to-phase.
+	TargetPhase int `json:"targetPhase,omitempty"`
+	// IdeationType optionally scopes run-ideation to one IdeationTypes key.
+	IdeationType string `json:"ideationType,omitempty"`
 }
 
 // Roadmap document.

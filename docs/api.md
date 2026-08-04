@@ -41,7 +41,18 @@ Credentials stay in **ORA**. OPM calls peer `scm:pm` endpoints; the dashboard us
 - `POST /api/projects/{id}/github/projects/sync-item` `{ specId?|featureId?, title?, body?, status? }` → create/update draft Project item; maps OPM column → Status option best-effort
 - `POST /api/projects/{id}/github/sync-task/{specId}` → push task title/status to bound Project item + optional milestone state
 
-Task fields: `githubMilestoneNumber`, `githubMilestoneTitle`, `githubMilestoneUrl`, `githubProjectId`, `githubProjectItemId` (also via `PATCH …/tasks/{specId}`).
+### Task ↔ Issue sync
+
+- `POST /api/projects/{id}/github/issues/link` `{ specId, issueNumber }` attaches an existing issue (verified to exist first), or `{ specId, create: true, title?, body?, labels? }` opens a new one — title/body default to the task's → `{ ok, mode: "attached"|"created", issue, task }`
+- `POST /api/projects/{id}/github/issues/unlink` `{ specId }` → drops the link only; the issue is left untouched
+- `POST /api/projects/{id}/github/issues/push` `{ specId }` → `{ ok, pushed: [fields], boardColumn, issueState, issue, task }`
+- `POST /api/projects/{id}/github/issues/pull` `{ specId, adoptTitle? }` → `{ ok, changed: [fields], movedTo, titleDiverged, issue, task }`
+
+Push sends task title, description and the state implied by the board column (`done` → `closed`, every other column → `open`). Pull mirrors issue state, assignee, labels and milestone; a `closed` issue moves the task to `done` and reopening returns it to `in_progress`, while an `open` issue on any other column moves nothing because `open` matches five columns. The issue title is mirrored into `githubIssueTitle` without overwriting the task title unless `adoptTitle` is set, so a refresh cannot discard a local edit.
+
+Failures carry `status` (`missing_issues_permission` 403, `issue_not_found` 404, `no_issue_linked` / `not_linked_repo` 400, `upstream_error` 502), are persisted on the task as `githubIssueSyncError`, and are appended to the spec log `github-issue-sync`. Full mapping and permission tables: [github-setup.md](github-setup.md).
+
+Task fields: `githubMilestoneNumber`, `githubMilestoneTitle`, `githubMilestoneUrl`, `githubProjectId`, `githubProjectItemId` (also via `PATCH …/tasks/{specId}`); issue link `githubIssueNumber`, `githubIssueUrl`, `githubIssueState`, `githubIssueTitle`, `githubIssueAssignee`, `githubIssueLabels`, `githubIssueSyncedAt`, `githubIssueSyncError`. Patching `githubIssueNumber` to `0` clears the link.
 
 Roadmap phase/feature fields: `github_milestone_number`, `github_milestone_title`, `github_milestone_url`; features also `github_project_id`, `github_project_item_id`.
 
@@ -50,9 +61,10 @@ Roadmap phase/feature fields: `github_milestone_number`, `github_milestone_title
 | Capability | App permission / PAT |
 |------------|----------------------|
 | List/create/update milestones | `issues: write` (+ `metadata: read`) |
+| Link / push / pull task issues | `issues: write` (+ `metadata: read`) |
 | List Projects v2 / draft items / Status | `organization_projects: write` (App) or fine-grained **Projects** read/write (PAT) |
 
-Without `organization_projects`, milestone bind still works; Projects list returns `missing_organization_projects`. Moving a board task with a linked Project item best-effort syncs Status.
+Issue sync adds no permission beyond the `issues: write` milestones already need. Without `organization_projects`, milestone bind and issue sync still work; Projects list returns `missing_organization_projects`. Moving a board task with a linked Project item best-effort syncs Status.
 
 ## Board and tasks
 
@@ -83,31 +95,25 @@ Columns: `backlog`, `queue`, `in_progress`, `review`, `human_review`, `done`.
 
 - `GET /api/projects/{id}/status`
 - `GET /api/projects/{id}/jobs`
-- `POST /api/projects/{id}/jobs` `{ action, specId? }`
+- `POST /api/projects/{id}/jobs` `{ action, specId?, targetPhase?, ideationType? }`
 - `GET /api/projects/{id}/jobs/{runId}`
 - `POST /api/projects/{id}/jobs/{runId}/cancel`
 
-Job actions include: `run-planning`, `run-implementation`, `run-review`, `run-qa-fix`, `run-followup-planning`, `recover-subtask`, `mark-stuck`, `pause-task`, `resume-task`, `run-roadmap-discovery`, `run-roadmap-features`, `run-ideation`, `generate-changelog`.
+Job actions include: `run-planning`, `run-implementation`, `run-review`, `run-qa-fix`, `run-followup-planning`, `recover-subtask`, `mark-stuck`, `pause-task`, `resume-task`, `skip-to-phase`, `run-roadmap-discovery`, `run-roadmap-features`, `run-ideation`, `generate-changelog`.
 
-Jobs prepare an ephemeral clone (via ORA clone credentials when configured). When `/api/spawn-probe` reports `spawnReady: true` (docker CLI + daemon + `opm-runner-task:nas`), the job **docker-runs** one hardened ephemeral runner (`execution: "container"`), which invokes a chat-completions-compatible model endpoint when `OPM_MODEL_API_KEY` is set and writes `/out/result.json`. The control plane persists model output into `spec.md` / plan / progress / review / logs. Without a key (or on model failure), the runner reports `mode=fallback` and shared builtin helpers still write artifacts. On spawn failure or `OPM_FORCE_BUILTIN=1`, jobs fall back to builtin-only (`execution: "builtin"`). Orchestrator `/api/spawn-probe` includes `modelConfigured` / `modelHonesty`.
+- `skip-to-phase` requires `specId` and 1-based `targetPhase` (plan phase number).
+- `run-ideation` may set `ideationType` to one of the ideation type keys; omit to fill all types.
+
+Jobs prepare an ephemeral clone (via ORA clone credentials when configured). When `/api/spawn-probe` reports `spawnReady: true` (docker CLI + daemon + `opm-runner-task:nas`), the job **docker-runs** one hardened ephemeral runner (`execution: "container"`), which invokes an OpenAI-compatible model when `OPM_MODEL_API_KEY` is set and writes `/out/result.json`. The control plane persists model output into `spec.md` / plan / progress / review / logs / roadmap / ideation. Without a key (or on model failure), the runner reports `mode=fallback` and shared builtin helpers still write artifacts. On spawn failure or `OPM_FORCE_BUILTIN=1`, jobs fall back to builtin-only (`execution: "builtin"`). Orchestrator `/api/spawn-probe` includes `modelConfigured` / `modelHonesty`.
 
 ### What jobs do and do not do
 
-Three limits are easy to misread from the action list above. Each is a property of the current code, not a
-configuration you can switch on:
+Limits that are easy to misread from the action list above:
 
-- **Jobs never modify the cloned repository.** `prepareJobWorkspace` creates the clone and `executeJob`
-  discards the handle immediately (`job_runner.go:45-50`, `_ = workDir`). The only git commands in this service
-  are two `git clone` invocations (`workspace.go:57`, `:69`) — there is no `git add`, `commit`, `push`, branch
-  creation, or pull-request call anywhere. `run-implementation` advances the **plan**: it flips the next
-  subtask to `completed` (`job_runner.go:321-341`) and, on the model path, appends a section to
-  `IMPLEMENTATION_NOTES.md` (`model_apply.go:111-135`). `run-review` derives PASS/FAIL from plan completeness
-  (`model_apply.go:146-152`), not from reading a diff.
-- **`run-roadmap-discovery`, `run-roadmap-features`, and `run-ideation` record an acknowledgement only.** All
-  three route to `builtinMetaNote` (`job_runner.go:147-148`), which appends one project-log line and returns
-  `"builtin placeholder — agent prompts not wired yet"` (`job_runner.go:688-691`). The job reports
-  `state: completed`, so treat a success here as "the request was logged", not "content was generated".
-  Setting `OPM_MODEL_API_KEY` does not change this: `applyRunnerResult` handles planning, implementation, and
-  review only and returns `false` for everything else (`model_apply.go:17-29`).
-- **`skip-to-phase` is not implemented.** `POST …/jobs` with that action falls into the `default` branch and
-  fails with `unsupported action` (`job_runner.go:149-151`). There is no `targetPhase` field on the job model.
+- **Jobs never modify the cloned repository.** The job clone is discarded after the run (`_ = workDir`);
+  there is no `git add`/`commit`/`push`, branch creation, or pull-request call. `run-implementation` advances
+  the **plan**; `run-review` judges plan completeness, not a diff.
+- **`run-roadmap-discovery`, `run-roadmap-features`, and `run-ideation`** write vision/phases/features/ideas
+  via builtin helpers (after optional container spawn). Model apply still covers planning/implementation/review only.
+- **`skip-to-phase`** requires `specId` and 1-based `targetPhase`; it marks earlier plan subtasks complete and advances progress.
+
