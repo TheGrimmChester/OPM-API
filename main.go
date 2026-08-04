@@ -60,13 +60,19 @@ func main() {
 	_ = authAdmin
 
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		mode := openauth.ModeCodeployed
+		if authGate != nil {
+			mode = authGate.Mode
+		}
 		writeJSON(w, map[string]interface{}{
-			"status":  "ok",
-			"service": "opm-api",
-			"version": buildVersion,
+			"status":    "ok",
+			"service":   "opm-api",
+			"version":   buildVersion,
+			"auth_mode": string(mode),
 		})
 	})
 
+	registerLocalAuthMux(mux)
 	registerOPMMux(mux, store, authView, authAdmin)
 	registerServiceAuthProbe(mux)
 
