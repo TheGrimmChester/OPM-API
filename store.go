@@ -101,6 +101,36 @@ func (s *Store) GetProject(id string) (Project, error) {
 	return Project{}, fmt.Errorf("project not found")
 }
 
+// ListProjectsForOrg returns projects belonging to org. Empty org = unscoped (auth off).
+func (s *Store) ListProjectsForOrg(org string) ([]Project, error) {
+	all, err := s.ListProjects()
+	if err != nil {
+		return nil, err
+	}
+	if org == "" {
+		return all, nil
+	}
+	out := make([]Project, 0, len(all))
+	for _, p := range all {
+		if projectInOrg(p, org) {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// GetProjectForOrg returns the project only when it belongs to org (404 otherwise).
+func (s *Store) GetProjectForOrg(id, org string) (Project, error) {
+	p, err := s.GetProject(id)
+	if err != nil {
+		return Project{}, err
+	}
+	if !projectInOrg(p, org) {
+		return Project{}, fmt.Errorf("project not found")
+	}
+	return p, nil
+}
+
 func (s *Store) CreateProject(in Project) (Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -130,7 +160,7 @@ func (s *Store) CreateProject(in Project) (Project, error) {
 		OwnerRepo:      ownerRepo,
 		GithubRepoID:   strings.TrimSpace(in.GithubRepoID),
 		ConnectorID:    connectorID,
-		OrganizationID: strings.TrimSpace(in.OrganizationID),
+		OrganizationID: normalizeWriteOrg(in.OrganizationID),
 		HTMLURL:        strings.TrimSpace(in.HTMLURL),
 		DefaultBranch:  nz(strings.TrimSpace(in.DefaultBranch), "main"),
 		CreatedAt:      now,

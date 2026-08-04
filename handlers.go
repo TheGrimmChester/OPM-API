@@ -15,7 +15,8 @@ func registerOPMMux(mux *http.ServeMux, store *Store, authView, authAdmin func(s
 	authView("/api/projects", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			projects, err := store.ListProjects()
+			org := resolveRequestOrg(r)
+			projects, err := store.ListProjectsForOrg(org)
 			if err != nil {
 				writeError(w, 500, err.Error())
 				return
@@ -32,8 +33,9 @@ func registerOPMMux(mux *http.ServeMux, store *Store, authView, authAdmin func(s
 				return
 			}
 			if in.OrganizationID == "" {
-				in.OrganizationID = orgHeader(r)
+				in.OrganizationID = resolveRequestOrg(r)
 			}
+			in.OrganizationID = normalizeWriteOrg(in.OrganizationID)
 			p, err := store.CreateProject(in)
 			if err != nil {
 				writeError(w, 400, err.Error())
@@ -65,11 +67,18 @@ func handleProjectRoute(store *Store) http.HandlerFunc {
 		}
 		parts := strings.Split(path, "/")
 		projectID := parts[0]
+		org := resolveRequestOrg(r)
+
+		// Org gate first — blocks IDOR on GET/DELETE and all nested board/jobs/GitHub ops.
+		if _, err := store.GetProjectForOrg(projectID, org); err != nil {
+			writeError(w, 404, err.Error())
+			return
+		}
 
 		if len(parts) == 1 {
 			switch r.Method {
 			case http.MethodGet:
-				p, err := store.GetProject(projectID)
+				p, err := store.GetProjectForOrg(projectID, org)
 				if err != nil {
 					writeError(w, 404, err.Error())
 					return

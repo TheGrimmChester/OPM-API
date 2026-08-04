@@ -3,6 +3,8 @@ package main
 import (
 	"path/filepath"
 	"testing"
+
+	opentenant "github.com/TheGrimmChester/open-tenant-go"
 )
 
 func TestStoreLifecycle(t *testing.T) {
@@ -79,8 +81,54 @@ func TestCreateProjectRejectsBadRepo(t *testing.T) {
 	}
 }
 
-func TestNormalizeOwnerRepo(t *testing.T) {
-	if got := normalizeOwnerRepo("https://github.com/Acme/Demo.git"); got != "Acme/Demo" {
+func TestOrgScopedProjectAccess(t *testing.T) {
+	opentenant.SetAuthEnforced(true)
+	t.Cleanup(func() { opentenant.SetAuthEnforced(false) })
+
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := store.CreateProject(Project{
+		OwnerRepo: "acme/a", ConnectorID: "c1", OrganizationID: "default-org",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := store.CreateProject(Project{
+		OwnerRepo: "acme/b", ConnectorID: "c1", OrganizationID: "other-org",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := store.ListProjectsForOrg("default-org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != a.ID {
+		t.Fatalf("default-org list=%v", list)
+	}
+	empty, err := store.ListProjectsForOrg("missing-org")
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("missing-org should be empty: %v %v", empty, err)
+	}
+	if _, err := store.GetProjectForOrg(b.ID, "default-org"); err == nil {
+		t.Fatal("expected IDOR blocked for cross-org GetProjectForOrg")
+	}
+	if _, err := store.GetProjectForOrg(b.ID, "other-org"); err != nil {
+		t.Fatalf("same-org get: %v", err)
+	}
+}
+
+func TestNormalizeWriteOrg(t *testing.T) {
+	if got := normalizeWriteOrg(""); got != "default-org" {
+		t.Fatalf("got %s", got)
+	}
+	if got := normalizeWriteOrg("all"); got != "default-org" {
+		t.Fatalf("got %s", got)
+	}
+	if got := normalizeWriteOrg("nas"); got != "nas" {
 		t.Fatalf("got %s", got)
 	}
 }
