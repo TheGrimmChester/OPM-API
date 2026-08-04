@@ -10,11 +10,13 @@ import (
 
 	openauth "github.com/TheGrimmChester/open-auth-go"
 	openjob "github.com/TheGrimmChester/open-job-go"
+	openlogger "github.com/TheGrimmChester/open-logger-go"
 )
 
 var buildVersion = "opm-api-dev"
 
 func main() {
+	openlogger.LogInfo("opm-api starting", map[string]interface{}{"version": buildVersion})
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case "orchestrator":
