@@ -18,7 +18,9 @@ type runnerSpawnProbe struct {
 	DockerDaemon       bool   `json:"dockerDaemon"`
 	RunnerImagePresent bool   `json:"runnerImagePresent"`
 	SpawnReady         bool   `json:"spawnReady"`
+	ModelConfigured    bool   `json:"modelConfigured"`
 	Honesty            string `json:"honesty"`
+	ModelHonesty       string `json:"modelHonesty"`
 }
 
 func probeRunnerSpawn() runnerSpawnProbe {
@@ -28,8 +30,10 @@ func probeRunnerSpawn() runnerSpawnProbe {
 	}
 	img := openjob.RunnerImage("opm", "task", tag)
 	out := runnerSpawnProbe{
-		RunnerImage: img,
-		Honesty:     "Container spawn unavailable. Jobs use the builtin in-process executor (OPM_FORCE_BUILTIN or missing docker).",
+		RunnerImage:     img,
+		ModelConfigured: modelAPIKeyPresent(),
+		ModelHonesty:    modelConfigHonesty(),
+		Honesty:         "Container spawn unavailable. Jobs use the builtin in-process executor (OPM_FORCE_BUILTIN or missing docker).",
 	}
 
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -55,6 +59,8 @@ func probeRunnerSpawn() runnerSpawnProbe {
 	}
 	out.RunnerImagePresent = true
 	out.SpawnReady = true
-	out.Honesty = "docker + " + img + " ready. Jobs docker-run the runner when spawnReady; artifact writes use shared helpers with builtin fallback on spawn failure. Set OPM_FORCE_BUILTIN=1 to skip containers."
+	out.ModelConfigured = modelAPIKeyPresent()
+	out.ModelHonesty = modelConfigHonesty()
+	out.Honesty = "docker + " + img + " ready. Jobs docker-run the runner when spawnReady; model path uses OPM_MODEL_* when configured, else honest fallback + builtin artifacts. Set OPM_FORCE_BUILTIN=1 to skip containers."
 	return out
 }

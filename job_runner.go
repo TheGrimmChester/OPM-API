@@ -55,6 +55,8 @@ func executeJob(store *Store, j Job) {
 	}
 
 	spawnNote := ""
+	var runnerRR RunnerResult
+	var hasRunnerRR bool
 	if preferContainerSpawn() {
 		j.State = "running"
 		j.Execution = "container"
@@ -63,7 +65,7 @@ func executeJob(store *Store, j Job) {
 		j.ProgressPct = &pctStart
 		_ = store.UpdateJob(j.ProjectID, j)
 
-		out, serr := runTaskContainer(j)
+		cout, serr := runTaskContainer(store, j)
 		if serr != nil {
 			spawnNote = fmt.Sprintf("Container spawn failed (%v); falling back to builtin. ", serr)
 			execution = "builtin"
@@ -73,7 +75,15 @@ func executeJob(store *Store, j Job) {
 			execution = "container"
 			j.Execution = execution
 			spawnNote = "Container spawn OK"
-			if tip := strings.TrimSpace(out); tip != "" {
+			if cout.HasResult {
+				runnerRR = cout.Result
+				hasRunnerRR = true
+				spawnNote += fmt.Sprintf(" (runner mode=%s", runnerRR.Mode)
+				if runnerRR.Reason != "" {
+					spawnNote += "; " + truncateRunes(runnerRR.Reason, 80)
+				}
+				spawnNote += ")"
+			} else if tip := strings.TrimSpace(cout.Stdout); tip != "" {
 				spawnNote += " (" + truncateRunes(strings.ReplaceAll(tip, "\n", " "), 120) + ")"
 			}
 			spawnNote += ". "
@@ -94,30 +104,52 @@ func executeJob(store *Store, j Job) {
 	}
 
 	resultMsg := ""
-	switch j.Action {
-	case "run-planning", "run-followup-planning":
-		resultMsg, err = builtinPlanning(store, j)
-	case "run-implementation":
-		resultMsg, err = builtinImplementation(store, j)
-	case "run-review":
-		resultMsg, err = builtinReview(store, j)
-	case "run-qa-fix":
-		resultMsg, err = builtinQaFix(store, j)
-	case "recover-subtask":
-		resultMsg, err = builtinRecover(store, j)
-	case "mark-stuck":
-		resultMsg, err = builtinMarkStuck(store, j)
-	case "pause-task":
-		resultMsg, err = builtinPause(store, j)
-	case "resume-task":
-		resultMsg, err = builtinResume(store, j)
-	case "generate-changelog":
-		resultMsg, err = builtinChangelog(store, j)
-	case "run-roadmap-discovery", "run-roadmap-features", "run-ideation":
-		resultMsg, err = builtinMetaNote(store, j)
-	default:
-		resultMsg = "Unknown action; no artifacts written."
-		err = fmt.Errorf("unsupported action %q", j.Action)
+	usedModel := false
+	if hasRunnerRR {
+		if handled, msg, aerr := applyRunnerResult(store, j, runnerRR); handled {
+			resultMsg, err = msg, aerr
+			usedModel = true
+		} else if runnerRR.Mode == "fallback" && runnerRR.Reason != "" {
+			spawnNote += "Model fallback: " + truncateRunes(runnerRR.Reason, 160) + ". "
+			if j.SpecID != "" {
+				phase := "planning"
+				switch j.Action {
+				case "run-implementation":
+					phase = "implementation"
+				case "run-review", "run-qa-fix":
+					phase = "validation"
+				}
+				_ = store.AppendSpecLog(j.ProjectID, j.SpecID, phase,
+					fmt.Sprintf("[%s] runner fallback: %s\n", j.RunID, runnerRR.Reason))
+			}
+		}
+	}
+	if !usedModel {
+		switch j.Action {
+		case "run-planning", "run-followup-planning":
+			resultMsg, err = builtinPlanning(store, j)
+		case "run-implementation":
+			resultMsg, err = builtinImplementation(store, j)
+		case "run-review":
+			resultMsg, err = builtinReview(store, j)
+		case "run-qa-fix":
+			resultMsg, err = builtinQaFix(store, j)
+		case "recover-subtask":
+			resultMsg, err = builtinRecover(store, j)
+		case "mark-stuck":
+			resultMsg, err = builtinMarkStuck(store, j)
+		case "pause-task":
+			resultMsg, err = builtinPause(store, j)
+		case "resume-task":
+			resultMsg, err = builtinResume(store, j)
+		case "generate-changelog":
+			resultMsg, err = builtinChangelog(store, j)
+		case "run-roadmap-discovery", "run-roadmap-features", "run-ideation":
+			resultMsg, err = builtinMetaNote(store, j)
+		default:
+			resultMsg = "Unknown action; no artifacts written."
+			err = fmt.Errorf("unsupported action %q", j.Action)
+		}
 	}
 
 	j, gerr := store.GetJob(j.ProjectID, j.RunID)

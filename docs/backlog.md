@@ -20,8 +20,8 @@ Short gap list after containerized task spawn, stuck/recover, pause/resume, and 
 
 | Area | Gap | Notes |
 |------|-----|-------|
-| Jobs | Model-backed agents in runner | Container spawn works; prompts/agent CLI inside `opm-runner-task` still follow-on |
-| Jobs | Higher-quality planning/impl | Helpers are heuristic until model-backed runners land |
+| Jobs | Model-backed agents in runner | **Shipped**: runner calls OpenAI-compatible API when `OPM_MODEL_API_KEY` set; fallback + builtin otherwise |
+| Jobs | Higher-quality planning/impl | Model output persisted when key present; builtin heuristics remain fallback |
 | Roadmap / ideation | Agent runs | Actions enqueue but only placeholder logs |
 | Pipeline | Skip-to-phase | Pause/resume shipped; skip still missing |
 | Docs / E2E | Automated NAS suite | Manual curl + UI verification |
