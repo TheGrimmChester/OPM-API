@@ -219,10 +219,23 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 				writeError(w, 400, "invalid json")
 				return
 			}
+			prev, prevErr := store.GetTask(projectID, specID)
 			t, err := store.UpdateTask(projectID, specID, patch)
 			if err != nil {
 				writeError(w, 400, err.Error())
 				return
+			}
+			// A rename or description edit must reach the linked board item. The edit
+			// itself already succeeded, so a failed sync does not fail the request —
+			// instead the outcome is persisted on the task (githubProjectSyncedAt /
+			// githubProjectSyncError) and appended to the spec log, and the task
+			// returned below carries it. The response shape is unchanged.
+			if prevErr == nil && taskTextChanged(prev, t) {
+				if p, perr := store.GetProjectForOrg(projectID, resolveRequestOrg(r)); perr == nil {
+					if outcome := syncTaskProjectAfterEdit(store, p, t); outcome.Task.SpecID != "" {
+						t = outcome.Task
+					}
+				}
 			}
 			writeJSON(w, t)
 		case http.MethodDelete:

@@ -2,11 +2,21 @@
 
 ## Unreleased
 
-- Correction (2026-08-04): the Projects v2 entry below overstates item sync. Binding a project, creating draft
-  items, and Status-on-move work, but **title refresh for an existing draft item does nothing** —
-  `ORA-API/github_projects.go:294-302` returns `nil` without calling the API and the error is discarded at
-  `ORA-API/peer_scm_pm.go:268`, so a renamed task never reaches the board and no failure is reported. Original
-  entry kept below as written.
+- Fixed (2026-08-04): the Projects v2 title refresh noted below as a silent no-op now works. ORA resolves the
+  board item to its backing draft issue and calls `updateProjectV2DraftIssue`, and OPM re-syncs on a title or
+  description change — `PATCH …/tasks/{specId}` previously never touched the board at all. Every outcome is
+  persisted on the task as `githubProjectSyncError` / `githubProjectSyncedAt`, appended to the
+  `github-project-sync` spec log, and returned with a machine-readable `status`. A `200` from ORA whose
+  `title_synced` is false is treated as a failure, not success, and an ORA that reports no `title_status` is
+  treated as unknown rather than assumed good.
+- Feature: unbind. `POST …/github/projects/unbind` clears the project-level Projects v2 bind and
+  `POST …/github/projects/items/unbind` clears a single task's board-item bind; both leave GitHub untouched.
+  `BindGitHubProject` now rejects a blank `projectId` instead of silently unbinding.
+- Note: Projects v2 needs **Organization permissions › Projects: Read and write** on the GitHub App
+  installation, which the current installation does not have. Until it is granted every board call returns
+  `missing_organization_projects` with the permission named; milestone and Issue routes are unaffected.
+- Column moves no longer discard their sync error: a failed Status update after a board move is persisted on the
+  task and logged, rather than dropped in a detached goroutine.
 - Feature: Roadmap/ideation agent generators — `run-roadmap-discovery`, `run-roadmap-features`, and `run-ideation` write vision/phases/features/ideas (builtin helpers after optional container spawn); optional `ideationType` on enqueue.
 - Feature: Skip-to-phase — `skip-to-phase` job with `targetPhase` marks earlier plan subtasks complete and advances progress; exposed on task actions.
 

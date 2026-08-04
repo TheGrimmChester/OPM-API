@@ -37,9 +37,36 @@ Credentials stay in **ORA**. OPM calls peer `scm:pm` endpoints; the dashboard us
 - `GET /api/projects/{id}/github/milestones` → `{ milestones: [{ number, title, description, state, html_url }] }`
 - `POST /api/projects/{id}/github/milestones/assign` `{ specId?|featureId?|phaseId?, milestoneNumber?, title?, description?, state?, createIfMissing? }` → bind + optional upsert on GitHub
 - `GET /api/projects/{id}/github/projects` → `{ projects: [{ id, title, url, number }], boundProjectId, … }` (Projects v2 GraphQL)
-- `POST /api/projects/{id}/github/projects/bind` `{ projectId, projectTitle?, projectUrl? }` → bind OPM project to a GitHub Project
+- `POST /api/projects/{id}/github/projects/bind` `{ projectId, projectTitle?, projectUrl? }` → bind OPM project to a GitHub Project. A blank `projectId` is rejected — use `unbind`
+- `POST /api/projects/{id}/github/projects/unbind` → clears the project-level bind; the GitHub Project and its items are left untouched
+- `POST /api/projects/{id}/github/projects/items/unbind` `{ specId }` → clears one task's board-item bind; the board item is left untouched
 - `POST /api/projects/{id}/github/projects/sync-item` `{ specId?|featureId?, title?, body?, status? }` → create/update draft Project item; maps OPM column → Status option best-effort
-- `POST /api/projects/{id}/github/sync-task/{specId}` → push task title/status to bound Project item + optional milestone state
+- `POST /api/projects/{id}/github/sync-task/{specId}` → push task title/description/status to bound Project item + optional milestone state
+
+### Task ↔ board item sync
+
+A draft item's title and body genuinely update: ORA resolves the board item to its backing draft issue and calls
+the Projects v2 update mutation. Renaming a task or editing its description via `PATCH …/tasks/{specId}`
+re-syncs the bound board item automatically (the response shape is unchanged — the returned task carries the
+outcome).
+
+Nothing about a failed board sync is silent. `sync-item` and `sync-task` answer with `status` and a real HTTP
+code, the reason is persisted on the task as `githubProjectSyncError`, and it is appended to the spec log
+`github-project-sync`. A success stamps `githubProjectSyncedAt` and clears the error.
+
+| `status` | HTTP | Meaning |
+|----------|------|---------|
+| `ok` | 200 | The board item matches the task. |
+| `nothing_to_sync` | 200 | Nothing was requested (no title or body). |
+| `missing_organization_projects` | 403 | The App installation lacks organization projects write. Body carries `missing`. |
+| `title_sync_unsupported` | 422 | The card is backed by a real Issue or PR, whose title lives on the issue — use the Issue sync routes instead. |
+| `item_not_found` | 404 | The board item, or its draft content, is gone. |
+| `no_project_bound` | 400 | No GitHub Project is bound to the task or project. |
+| `upstream_error` | 502 | Anything else, including an ORA that reports no `title_status` at all. |
+
+A `200` from ORA whose `title_synced` is false is a **partial failure** — the card exists but the rename did not
+land — and is recorded exactly like a hard failure. A column move that fails to sync Status is persisted on the
+task and logged even though its HTTP response has already been sent.
 
 ### Task ↔ Issue sync
 
@@ -52,7 +79,7 @@ Push sends task title, description and the state implied by the board column (`d
 
 Failures carry `status` (`missing_issues_permission` 403, `issue_not_found` 404, `no_issue_linked` / `not_linked_repo` 400, `upstream_error` 502), are persisted on the task as `githubIssueSyncError`, and are appended to the spec log `github-issue-sync`. Full mapping and permission tables: [github-setup.md](github-setup.md).
 
-Task fields: `githubMilestoneNumber`, `githubMilestoneTitle`, `githubMilestoneUrl`, `githubProjectId`, `githubProjectItemId` (also via `PATCH …/tasks/{specId}`); issue link `githubIssueNumber`, `githubIssueUrl`, `githubIssueState`, `githubIssueTitle`, `githubIssueAssignee`, `githubIssueLabels`, `githubIssueSyncedAt`, `githubIssueSyncError`. Patching `githubIssueNumber` to `0` clears the link.
+Task fields: `githubMilestoneNumber`, `githubMilestoneTitle`, `githubMilestoneUrl`, `githubProjectId`, `githubProjectItemId`, `githubProjectSyncedAt`, `githubProjectSyncError` (also via `PATCH …/tasks/{specId}`); issue link `githubIssueNumber`, `githubIssueUrl`, `githubIssueState`, `githubIssueTitle`, `githubIssueAssignee`, `githubIssueLabels`, `githubIssueSyncedAt`, `githubIssueSyncError`. Patching `githubIssueNumber` to `0` clears the link.
 
 Roadmap phase/feature fields: `github_milestone_number`, `github_milestone_title`, `github_milestone_url`; features also `github_project_id`, `github_project_item_id`.
 
@@ -62,9 +89,14 @@ Roadmap phase/feature fields: `github_milestone_number`, `github_milestone_title
 |------------|----------------------|
 | List/create/update milestones | `issues: write` (+ `metadata: read`) |
 | Link / push / pull task issues | `issues: write` (+ `metadata: read`) |
-| List Projects v2 / draft items / Status | `organization_projects: write` (App) or fine-grained **Projects** read/write (PAT) |
+| List Projects v2 / draft items / Status / **title refresh** | `organization_projects: write` (App — under **Organization permissions › Projects: Read and write**) or fine-grained **Projects** read/write (PAT) |
 
-Issue sync adds no permission beyond the `issues: write` milestones already need. Without `organization_projects`, milestone bind and issue sync still work; Projects list returns `missing_organization_projects`. Moving a board task with a linked Project item best-effort syncs Status.
+Issue sync adds no permission beyond the `issues: write` milestones already need.
+
+**The current App installation does not have `organization_projects`, so the whole Projects v2 path — list, bind
+sync, title refresh, Status on move — returns `missing_organization_projects` until it is granted and the
+installation permissions are re-accepted.** Milestone bind and Issue sync are unaffected. Proving the live title
+update end to end therefore needs a deployment with that permission granted.
 
 ## Board and tasks
 

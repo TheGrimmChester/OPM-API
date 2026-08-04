@@ -67,7 +67,8 @@ Rebuild with production tags (`opm-api:nas`, `opm-dashboard:nas`) — never smok
 After linking a repo:
 
 1. **Roadmap** or **Board → task detail** → pick a **GitHub Milestone** (listed from the connected repo via ORA).
-2. **Bind GitHub Project** (Projects v2) once per OPM project; then **Sync to Project** on tasks/features creates a draft item and best-effort maps board Status.
+2. **Bind GitHub Project** (Projects v2) once per OPM project; then **Sync to Project** on tasks/features creates a draft item and best-effort maps board Status. **Unbind** reverses either level — the project-level bind or a single task's board item — and leaves the GitHub Project and its items untouched.
+3. Renaming a task or editing its description re-syncs the bound board item. If the board cannot be updated the reason is shown on the task (`githubProjectSyncError`) and written to the `github-project-sync` spec log; it is never reported as success. Note this needs the organization projects permission below.
 
 ## 6. Link a task to a GitHub Issue
 
@@ -141,9 +142,15 @@ That last row is why a refresh cannot drag a task out of `human_review`.
 |---------|---------------------|
 | Milestones | **Issues** read/write |
 | Issue link / push / pull | **Issues** read/write |
-| Projects v2 | **Organization projects** write (optional; without it milestone bind and Issue sync still work) |
+| Projects v2 — list, item sync, title refresh, Status on move | **Organization permissions › Projects: Read and write** (`organization_projects: write`) |
 
 Issue sync needs no permission beyond the Issues read/write that milestones already require, so an install that can bind milestones can sync issues. PAT connectors need equivalent classic or fine-grained scopes (`repo` / Issues + Projects).
+
+**The current App installation does not grant `organization_projects`.** Everything Projects v2 therefore
+returns `missing_organization_projects` — with the permission named, rather than failing quietly — while
+milestone bind and Issue sync keep working. To enable it: edit the GitHub App's **Organization permissions**,
+set **Projects** to **Read and write**, then re-accept the installation's updated permissions in the
+organization's settings. The live board update can only be proved after that is deployed.
 
 ## Troubleshooting
 
