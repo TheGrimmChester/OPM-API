@@ -415,8 +415,10 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 			writeJSON(w, map[string]interface{}{"jobs": jobs})
 		case http.MethodPost:
 			var body struct {
-				Action string `json:"action"`
-				SpecID string `json:"specId"`
+				Action       string `json:"action"`
+				SpecID       string `json:"specId"`
+				TargetPhase  int    `json:"targetPhase"`
+				IdeationType string `json:"ideationType"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeError(w, 400, "invalid json")
@@ -427,12 +429,18 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 				writeError(w, 400, "action required")
 				return
 			}
+			if body.Action == "skip-to-phase" && body.TargetPhase < 1 {
+				writeError(w, 400, "targetPhase required for skip-to-phase (1-based)")
+				return
+			}
 			runner := openjob.RunnerImage("opm", "task", envOr("OPM_RUNNER_TAG", "nas"))
 			j, err := store.CreateJob(projectID, body.Action, body.SpecID, runner)
 			if err != nil {
 				writeError(w, 400, err.Error())
 				return
 			}
+			j.TargetPhase = body.TargetPhase
+			j.IdeationType = strings.TrimSpace(body.IdeationType)
 			if preferContainerSpawn() {
 				j.Execution = "container"
 				j.Message = "Queued: will docker-run " + runner + ", then write plan/spec/progress artifacts (builtin fallback on spawn failure)."
