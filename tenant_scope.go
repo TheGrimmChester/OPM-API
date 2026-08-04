@@ -57,3 +57,31 @@ func normalizeWriteOrg(org string) string {
 	}
 	return org
 }
+
+// concreteProjectHeader reports whether the client sent a real project id
+// (not empty, "all", or the ClickHouse-family lab sentinel).
+func concreteProjectHeader(headerProj string) bool {
+	headerProj = strings.TrimSpace(headerProj)
+	if headerProj == "" || strings.EqualFold(headerProj, opentenant.All) {
+		return false
+	}
+	if headerProj == "default-project" {
+		return false
+	}
+	return true
+}
+
+// enforcePathProjectHeader keeps nested /api/projects/{id}/… routes aligned with
+// X-Project-ID. Path is the source of truth for artifacts/jobs; a mismatched
+// concrete header is rejected so ideation/roadmap/jobs cannot run against a
+// different project than the selected (header) tenant. Empty/"all"/default-project
+// headers are pinned to the path id.
+func enforcePathProjectHeader(w http.ResponseWriter, r *http.Request, projectID string) bool {
+	headerProj := strings.TrimSpace(r.Header.Get("X-Project-ID"))
+	if concreteProjectHeader(headerProj) && headerProj != projectID {
+		writeError(w, http.StatusForbidden, "X-Project-ID does not match path project")
+		return false
+	}
+	r.Header.Set("X-Project-ID", projectID)
+	return true
+}
