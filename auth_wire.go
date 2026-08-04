@@ -9,6 +9,8 @@ import (
 
 // Thin product wiring around Open-Auth-Go. No local JWT/middleware copies.
 // OPM validates user JWTs (typically hub-issued); it does not register local login.
+// Gate.Middleware calls ApplyUserTenantHeaders then EnforceProjectACL
+// (Open-Auth-Go #6 / project_ids). Trust hub-minted claims; role admin bypasses.
 
 var authGate *openauth.Gate
 

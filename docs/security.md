@@ -10,7 +10,7 @@ Peer calls use `OPEN_SERVICE_JWT_SECRET` (prefer distinct from user `JWT_SECRET`
 
 ## Tenancy
 
-When `OPA_AUTH_REQUIRED=1`, send **`X-Organization-ID`** / **`X-Project-ID`** on control-plane requests. Sibling ClickHouse list APIs (OSA / OPL) scope to `default-org` / `default-project` when headers are omitted (Open-Tenant-Go ≥ 0.2.2); OPM should mirror the same tenant picker headers for consistent isolation.
+When `OPA_AUTH_REQUIRED=1`, send **`X-Organization-ID`** / **`X-Project-ID`** on control-plane requests. Sibling ClickHouse list APIs (OSA / OPL) scope to `default-org` / `default-project` when headers are omitted (Open-Tenant-Go ≥ 0.2.2); OPM should mirror the same tenant picker headers for consistent isolation. Hub JWTs with `project_ids` are allowlisted via Open-Auth-Go `EnforceProjectACL` (non-member → **403**; role `admin` unrestricted).
 
 ## Job sandbox
 
