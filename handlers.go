@@ -73,6 +73,10 @@ func handleProjectRoute(store *Store) http.HandlerFunc {
 			writeError(w, 404, err.Error())
 			return
 		}
+		// Selected-project gate: path and X-Project-ID must agree (pin when unset).
+		if !enforcePathProjectHeader(w, r, projectID) {
+			return
+		}
 
 		if len(parts) == 1 {
 			switch r.Method {
