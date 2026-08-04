@@ -10,6 +10,14 @@
 | `OPM_RUNNER_TAG` | `smoke` (NAS: `nas`) | Tag for `opm-runner-task` image name — prefer `nas` on NAS, never smoke |
 | `OPM_FORCE_BUILTIN` | empty | When `1`/`true`, skip `docker run` and use the in-process artifact writer only |
 | `OPM_INSTANCE` | `default` | Label value for `opm.instance` on runner containers |
+
+| `OPM_MODEL_API_KEY` | empty | API key for OpenAI-compatible chat completions inside `opm-runner-task`. **Required for model-backed plan/build/review.** When unset, the runner emits an honest fallback and the control plane writes builtin artifacts. Never commit this value — set it in compose `.env` only. |
+| `OPM_MODEL_BASE_URL` | `https://api.openai.com/v1` | Base URL for `/chat/completions` (any OpenAI-compatible provider). |
+| `OPM_MODEL` | `gpt-4o-mini` | Default model id for all phases. |
+| `OPM_MODEL_PLANNING` | empty | Optional override for planning jobs. |
+| `OPM_MODEL_CODING` | empty | Optional override for implementation jobs. |
+| `OPM_MODEL_REVIEW` | empty | Optional override for review jobs. |
+| `OPM_RUNNER_NETWORK` | `bridge` | Docker network used when a model key is present (replaces hardened `none` so the runner can reach the model API). |
 | `JWT_SECRET` | ephemeral | User JWT secret (≥32 bytes when auth required); share with hub in co-deployed mode |
 | `AUTH_MODE` | — | `codeployed` when hub issues tokens |
 | `OPA_AUTH_REQUIRED` | off | When `true`/`1`, require user JWT on control-plane routes |
