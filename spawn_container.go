@@ -42,10 +42,34 @@ type containerRunOutcome struct {
 	HasResult bool
 }
 
+// containerRepoPath is where the prepared clone appears inside the runner.
+const containerRepoPath = "/repo"
+
+// repoMountSource returns the host path to bind at /repo, or "" when there is no
+// usable clone. A workspace without .git is the credential-less placeholder
+// prepareJobWorkspace writes; mounting it would tell the runner it has source
+// when it does not.
+func repoMountSource(workDir string) string {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return ""
+	}
+	if st, err := os.Stat(filepath.Join(workDir, ".git")); err != nil || st == nil {
+		return ""
+	}
+	return workDir
+}
+
 // runTaskContainer starts one hardened ephemeral opm-runner-task container.
 // When OPM_MODEL_API_KEY is set, enables network + passes model env via --env-file
 // (Open-Job-Go ScrubEnv strips API_KEY from -e flags). Output lands in /out/result.json.
-func runTaskContainer(store *Store, j Job) (containerRunOutcome, error) {
+//
+// workDir is the prepared clone of the linked repository. It is mounted read-only
+// at /repo so a task runs against real source: the runner reads the tree and
+// returns file changes, and cannot mutate the workspace the control plane will
+// later commit from. An empty or missing workDir mounts nothing and the runner
+// reports that it had no source to work with.
+func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome, error) {
 	var out containerRunOutcome
 	if _, err := exec.LookPath("docker"); err != nil {
 		return out, fmt.Errorf("docker CLI not found: %w", err)
@@ -59,7 +83,7 @@ func runTaskContainer(store *Store, j Job) (containerRunOutcome, error) {
 	outDir := filepath.Join(jobTmpRoot(), j.RunID, "runner-out")
 	_ = os.MkdirAll(inDir, 0o755)
 	_ = os.MkdirAll(outDir, 0o755)
-	if err := writeRunnerInput(store, j, filepath.Join(inDir, "input.json")); err != nil {
+	if err := writeRunnerInput(store, j, filepath.Join(inDir, "input.json"), repoMountSource(workDir) != ""); err != nil {
 		return out, err
 	}
 
@@ -70,6 +94,10 @@ func runTaskContainer(store *Store, j Job) (containerRunOutcome, error) {
 		"OPM_PROJECT": j.ProjectID,
 		"OPM_IN_FILE": "/in/input.json",
 		"OPM_OUT_DIR": "/out",
+	}
+	repoMount := repoMountSource(workDir)
+	if repoMount != "" {
+		env["OPM_REPO_DIR"] = containerRepoPath
 	}
 	if v := envOr("OPM_MODEL_BASE_URL", ""); v != "" {
 		env["OPM_MODEL_BASE_URL"] = v
@@ -107,6 +135,9 @@ func runTaskContainer(store *Store, j Job) (containerRunOutcome, error) {
 	args = append(args, base[1:]...)
 
 	args = insertBeforeImage(args, img, "-v", inDir+":/in:ro", "-v", outDir+":/out")
+	if repoMount != "" {
+		args = insertBeforeImage(args, img, "-v", repoMount+":"+containerRepoPath+":ro")
+	}
 
 	wantModel := modelAPIKeyPresent()
 	if wantModel {
@@ -145,12 +176,19 @@ func runTaskContainer(store *Store, j Job) (containerRunOutcome, error) {
 	return out, nil
 }
 
-func writeRunnerInput(store *Store, j Job, path string) error {
+func writeRunnerInput(store *Store, j Job, path string, repoMounted bool) error {
 	in := map[string]string{
 		"action":    j.Action,
 		"runId":     j.RunID,
 		"specId":    j.SpecID,
 		"projectId": j.ProjectID,
+	}
+	if repoMounted {
+		in["repoDir"] = containerRepoPath
+	}
+	if p, err := store.GetProject(j.ProjectID); err == nil {
+		in["ownerRepo"] = p.OwnerRepo
+		in["defaultBranch"] = nz(p.DefaultBranch, "main")
 	}
 	if j.SpecID != "" {
 		if task, err := store.GetTask(j.ProjectID, j.SpecID); err == nil {
