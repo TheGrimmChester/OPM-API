@@ -5,6 +5,7 @@
 | [architecture.md](architecture.md) | Components, data layout, job flow |
 | [install.md](install.md) | Local and container install |
 | [configuration.md](configuration.md) | Environment variables |
+| [github-setup.md](github-setup.md) | GitHub App / connector setup for hub + ORA |
 | [api.md](api.md) | HTTP control-plane surface |
 | [interop.md](interop.md) | Peer URLs and service auth |
 | [operations.md](operations.md) | Health, logs, upgrades |
