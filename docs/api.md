@@ -2,6 +2,8 @@
 
 Base path: `/api`. JSON request/response. Auth optional unless `OPA_AUTH_REQUIRED` is set.
 
+When auth is required (NAS), send `Authorization: Bearer <hub-jwt>` plus **`X-Organization-ID`** / **`X-Project-ID`**. See [interop.md](interop.md#tenant-headers) and [security.md](security.md).
+
 ## Health
 
 - `GET /api/health` → `{ status, service: "opm-api", version }`

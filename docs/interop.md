@@ -41,3 +41,25 @@ Service JWTs use `iss=opm-api` / `aud=ora-api|opa-hub` / short `exp`. Probe: `GE
 ## Boundary
 
 Code-review and Repo Watch stay in ORA. OPM owns project/kanban/roadmap/task automation. Prefer deep-link or delegate over duplicating review.
+
+## Tenant headers
+
+When `OPA_AUTH_REQUIRED=1`, send **`X-Organization-ID`** and **`X-Project-ID`** with the hub JWT on control-plane calls (and when proxying ORA connectors). Sibling ClickHouse products (OSA / OPL) return **empty lists** without these headers; OPM project registry filtering also keys off organization — always set them so scripts match the dashboard picker.
+
+```bash
+TOKEN=$(curl -sf -X POST http://127.0.0.1:18080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin"}' | jq -r .token)
+
+curl -sf http://127.0.0.1:8096/api/projects \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Organization-ID: default-org" \
+  -H "X-Project-ID: default-project" | jq '.projects | length'
+
+curl -sf "http://127.0.0.1:8096/api/github/connectors?organizationId=default-org" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Organization-ID: default-org" \
+  -H "X-Project-ID: default-project" | jq '.connectors | length'
+```
+
+From the LAN use `192.168.100.101` instead of `127.0.0.1`. See [OPA-Stack interop](https://github.com/TheGrimmChester/OPA-Stack/blob/main/docs/interop.md#tenant-headers-required-when-auth-is-on).
