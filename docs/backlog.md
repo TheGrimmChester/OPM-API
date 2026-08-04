@@ -36,7 +36,7 @@ and capability routes need an operator token), so nothing here is claimed as ver
 | Roadmap / ideation | Generation | **Shipped (builtin)**: discovery/features/ideation write real artifacts; model-backed path for these still follow-on |
 | Pipeline | Skip-to-phase | **Shipped**: `skip-to-phase` + `targetPhase` |
 | Orchestrator | Dispatch + reaping | Health + spawn-probe only (scheduler stub); spawn in-process in `opm-api` |
-| Peer | Projects v2 draft title refresh | Silent no-op in ORA — task renames never reach the board |
+| Peer | Projects v2 draft title refresh | **Shipped**: renames reach the board and every outcome is reported. Blocked in practice until the App installation is granted organization projects write — reported as `missing_organization_projects`, not silently skipped |
 | Docs / E2E | Automated suite | Manual curl + UI verification |
 | Delivery | **Builtin path produces no code** | **Not implemented, by design.** The builtin runner advances plan state only. Without `OPM_MODEL_API_KEY` no change set is recorded and `deliver` answers `no_changes_produced`. Code delivery requires a configured model runner. |
 | Delivery | **PR state is a snapshot, not tracked** | **Not implemented.** `prState` is whatever the pull request was when it was opened. There is no webhook or poll, so a PR merged or closed on GitHub still shows `open` in OPM until the next delivery. |
