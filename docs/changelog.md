@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- Fixed (2026-08-04): the Projects v2 title refresh noted below as a silent no-op now works. ORA resolves the
+- Feature: **code delivery** — `POST /api/projects/{id}/tasks/{specId}/deliver` applies the change set an implementation run recorded, commits it on a task branch, pushes it with a short-lived ORA `scm:pr` Contents-write credential, and opens a pull request. Returns `{branch, commitSha, prNumber, prUrl}`; persists `deliveryBranch` / `deliveryCommitSha` / `deliveryFiles` / `deliveredAt` / `prNumber` / `prUrl` / `prState` / `deliveryStatus` / `deliveryError` on the task. Failures are machine-readable (`no_changes_produced`, `push_rejected`, `unsafe_path`, `apply_failed`, `missing_contents_permission`, `missing_pull_requests_permission`, …), persisted on the task and appended to the task's `delivery` spec log. A run that produced no file changes never reports a delivery.
+- Feature: the prepared clone is mounted **read-only at `/repo`** in `opm-runner-task`, so a task runs against real source. The runner returns `files[] { path, contents | patch | delete }` plus `commitMessage`; the control plane records that as the task's change set (`GET …/tasks/{specId}/changes`). The builtin path is unchanged and now says plainly that it writes no source code.
+- Security: delivery credentials never touch disk, argv, remote URLs or logs; git output is redacted. `.git/`, `.github/workflows/`, absolute paths and `..` are refused; staging is explicit per applied path (never `git add -A`).
+
+- Fixed (2026-08-04): the Projects v2 title refresh that previously did nothing now works. ORA resolves the
   board item to its backing draft issue and calls `updateProjectV2DraftIssue`, and OPM re-syncs on a title or
   description change — `PATCH …/tasks/{specId}` previously never touched the board at all. Every outcome is
   persisted on the task as `githubProjectSyncError` / `githubProjectSyncedAt`, appended to the
