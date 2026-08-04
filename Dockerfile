@@ -9,10 +9,13 @@ RUN go mod download
 COPY *.go ./
 RUN CGO_ENABLED=0 GOOS=linux go build -o opm-api .
 
+FROM docker:27-cli AS dockercli
+
 FROM debian:bookworm-slim AS opm-api
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /root/
 COPY --from=builder /app/opm-api .
 ENV LISTEN_ADDR=:8096 \
@@ -29,6 +32,8 @@ FROM debian:bookworm-slim AS opm-runner-task
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+COPY scripts/opm-runner-entrypoint.sh /usr/local/bin/opm-runner
+RUN chmod 755 /usr/local/bin/opm-runner
 USER 65532:65532
 WORKDIR /home/opm
-CMD ["sleep", "infinity"]
+ENTRYPOINT ["/usr/local/bin/opm-runner"]

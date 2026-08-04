@@ -7,7 +7,9 @@
 | `ORCHESTRATOR_LISTEN_ADDR` | `:8099` | Orchestrator listen address |
 | `OPM_DATA_DIR` | `~/.config/opm` | Linked-project registry + board/task data |
 | `OPM_JOB_TMP` | `/tmp/opm-jobs` | Ephemeral clone root for job workspaces |
-| `OPM_RUNNER_TAG` | `smoke` | Tag for `opm-runner-task` image name |
+| `OPM_RUNNER_TAG` | `smoke` (NAS: `nas`) | Tag for `opm-runner-task` image name — prefer `nas` on NAS, never smoke |
+| `OPM_FORCE_BUILTIN` | empty | When `1`/`true`, skip `docker run` and use the in-process artifact writer only |
+| `OPM_INSTANCE` | `default` | Label value for `opm.instance` on runner containers |
 | `JWT_SECRET` | ephemeral | User JWT secret (≥32 bytes when auth required); share with hub in co-deployed mode |
 | `AUTH_MODE` | — | `codeployed` when hub issues tokens |
 | `OPA_AUTH_REQUIRED` | off | When `true`/`1`, require user JWT on control-plane routes |
