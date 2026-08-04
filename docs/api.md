@@ -106,3 +106,14 @@ Job actions include: `run-planning`, `run-implementation`, `run-review`, `run-qa
 
 Jobs prepare an ephemeral clone (via ORA clone credentials when configured). When `/api/spawn-probe` reports `spawnReady: true` (docker CLI + daemon + `opm-runner-task:nas`), the job **docker-runs** one hardened ephemeral runner (`execution: "container"`), which invokes an OpenAI-compatible model when `OPM_MODEL_API_KEY` is set and writes `/out/result.json`. The control plane persists model output into `spec.md` / plan / progress / review / logs / roadmap / ideation. Without a key (or on model failure), the runner reports `mode=fallback` and shared builtin helpers still write artifacts. On spawn failure or `OPM_FORCE_BUILTIN=1`, jobs fall back to builtin-only (`execution: "builtin"`). Orchestrator `/api/spawn-probe` includes `modelConfigured` / `modelHonesty`.
 
+### What jobs do and do not do
+
+Limits that are easy to misread from the action list above:
+
+- **Jobs never modify the cloned repository.** The job clone is discarded after the run (`_ = workDir`);
+  there is no `git add`/`commit`/`push`, branch creation, or pull-request call. `run-implementation` advances
+  the **plan**; `run-review` judges plan completeness, not a diff.
+- **`run-roadmap-discovery`, `run-roadmap-features`, and `run-ideation`** write vision/phases/features/ideas
+  via builtin helpers (after optional container spawn). Model apply still covers planning/implementation/review only.
+- **`skip-to-phase`** requires `specId` and 1-based `targetPhase`; it marks earlier plan subtasks complete and advances progress.
+
