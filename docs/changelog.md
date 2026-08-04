@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Auth via Open-Auth-Go `Gate` (delete local `auth.go` duplicate; validate-only, no local login routes).
+
 ## 0.2.0
 
 - Projects are GitHub repositories only (`owner/repo` + ORA `connectorId`).
