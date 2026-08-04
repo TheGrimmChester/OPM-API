@@ -10,7 +10,7 @@ Peer calls use `OPEN_SERVICE_JWT_SECRET` (prefer distinct from user `JWT_SECRET`
 
 ## Tenancy
 
-When `OPA_AUTH_REQUIRED=1`, send **`X-Organization-ID`** / **`X-Project-ID`** on control-plane requests. They are not optional on NAS co-deployed stacks: sibling product list APIs (OSA / OPL) return empty arrays without them, and OPM should mirror the same tenant picker headers for consistent isolation.
+When `OPA_AUTH_REQUIRED=1`, send **`X-Organization-ID`** / **`X-Project-ID`** on control-plane requests. Sibling ClickHouse list APIs (OSA / OPL) scope to `default-org` / `default-project` when headers are omitted (Open-Tenant-Go ≥ 0.2.2); OPM should mirror the same tenant picker headers for consistent isolation.
 
 ## Job sandbox
 
