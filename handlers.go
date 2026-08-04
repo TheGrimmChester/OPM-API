@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"time"
 
 	openjob "github.com/TheGrimmChester/open-job-go"
 )
@@ -251,6 +250,17 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 			return
 		}
 		writeJSON(w, t)
+	case "approve":
+		if r.Method != http.MethodPost {
+			writeError(w, 405, "method not allowed")
+			return
+		}
+		t, err := store.ApproveForCoding(projectID, specID)
+		if err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, t)
 	case "plan":
 		if r.Method != http.MethodGet {
 			writeError(w, 405, "method not allowed")
@@ -273,6 +283,39 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 			return
 		}
 		writeJSON(w, prog)
+	case "spec":
+		if r.Method != http.MethodGet {
+			writeError(w, 405, "method not allowed")
+			return
+		}
+		md, err := store.GetSpecMarkdown(projectID, specID)
+		if err != nil {
+			writeError(w, 404, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"markdown": md})
+	case "logs":
+		if r.Method != http.MethodGet {
+			writeError(w, 405, "method not allowed")
+			return
+		}
+		logs, err := store.GetSpecLogs(projectID, specID)
+		if err != nil {
+			writeError(w, 404, err.Error())
+			return
+		}
+		writeJSON(w, map[string]interface{}{"logs": logs})
+	case "actions":
+		if r.Method != http.MethodGet {
+			writeError(w, 405, "method not allowed")
+			return
+		}
+		actions, err := store.GetTaskValidActions(projectID, specID)
+		if err != nil {
+			writeError(w, 404, err.Error())
+			return
+		}
+		writeJSON(w, actions)
 	default:
 		writeError(w, 404, "not found")
 	}
@@ -329,16 +372,35 @@ func handleIdeation(w http.ResponseWriter, r *http.Request, store *Store, projec
 }
 
 func handleChangelog(w http.ResponseWriter, r *http.Request, store *Store, projectID string) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		content, err := store.GetChangelog(projectID)
+		if err != nil {
+			writeError(w, 404, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"markdown": content})
+	case http.MethodPut, http.MethodPost:
+		var body struct {
+			Markdown string `json:"markdown"`
+			Content  string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, 400, "invalid json")
+			return
+		}
+		md := body.Markdown
+		if md == "" {
+			md = body.Content
+		}
+		if err := store.PutChangelog(projectID, md); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"markdown": md})
+	default:
 		writeError(w, 405, "method not allowed")
-		return
 	}
-	content, err := store.GetChangelog(projectID)
-	if err != nil {
-		writeError(w, 404, err.Error())
-		return
-	}
-	writeJSON(w, map[string]string{"markdown": content})
 }
 
 func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID string, rest []string) {
@@ -365,14 +427,16 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 				writeError(w, 400, "action required")
 				return
 			}
-			runner := openjob.RunnerImage("opm", "task", envOr("OPM_RUNNER_TAG", "smoke"))
+			runner := openjob.RunnerImage("opm", "task", envOr("OPM_RUNNER_TAG", "nas"))
 			j, err := store.CreateJob(projectID, body.Action, body.SpecID, runner)
 			if err != nil {
 				writeError(w, 400, err.Error())
 				return
 			}
-			// Stub: mark starting then complete asynchronously without spawning yet.
-			go stubRunJob(store, j)
+			j.Execution = "builtin"
+			j.Message = "Queued (builtin): will write plan/spec/progress artifacts in-process."
+			_ = store.UpdateJob(projectID, j)
+			go executeJob(store, j)
 			writeJSON(w, j)
 		default:
 			writeError(w, 405, "method not allowed")
@@ -413,76 +477,4 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 		return
 	}
 	writeError(w, 404, "not found")
-}
-
-func stubRunJob(store *Store, j Job) {
-	defer cleanupWorkspace(j.RunID)
-
-	p, err := store.GetProject(j.ProjectID)
-	if err != nil {
-		j.State = "failed"
-		j.Error = err.Error()
-		now := nowUTC()
-		j.CompletedAt = &now
-		_ = store.UpdateJob(j.ProjectID, j)
-		return
-	}
-
-	time.Sleep(100 * time.Millisecond)
-	now := nowUTC()
-	j.State = "starting"
-	j.StartedAt = &now
-	_ = store.UpdateJob(j.ProjectID, j)
-
-	workDir, err := prepareJobWorkspace(p, j.RunID)
-	if err != nil {
-		fail := nowUTC()
-		j.State = "failed"
-		j.Error = "workspace: " + err.Error()
-		j.CompletedAt = &fail
-		_ = store.UpdateJob(j.ProjectID, j)
-		return
-	}
-
-	time.Sleep(200 * time.Millisecond)
-	j, err = store.GetJob(j.ProjectID, j.RunID)
-	if err != nil || j.State == "cancelled" {
-		return
-	}
-	j.State = "running"
-	pct := 50
-	j.ProgressPct = &pct
-	_ = store.UpdateJob(j.ProjectID, j)
-
-	_ = openjob.DockerRunArgv(j.RunnerImage, openjob.Labels{
-		Product:  "opm",
-		JobID:    j.RunID,
-		Instance: j.ProjectID,
-	}, openjob.ScrubEnv(map[string]string{
-		"OPM_ACTION":     j.Action,
-		"OPM_SPEC_ID":    j.SpecID,
-		"OPM_PROJECT_ID": j.ProjectID,
-		"OPM_OWNER_REPO": p.OwnerRepo,
-		"OPM_WORKSPACE":  workDir,
-		"JWT_SECRET":     "should-be-scrubbed",
-	}))
-
-	time.Sleep(300 * time.Millisecond)
-	j, err = store.GetJob(j.ProjectID, j.RunID)
-	if err != nil || j.State == "cancelled" {
-		return
-	}
-	done := nowUTC()
-	j.State = "completed"
-	j.CompletedAt = &done
-	pct = 100
-	j.ProgressPct = &pct
-	_ = store.UpdateJob(j.ProjectID, j)
-
-	st := idleStatus()
-	st.LastUpdate = done.Format(time.RFC3339)
-	st.RunID = j.RunID
-	_ = store.withProject(j.ProjectID, func(proj Project) error {
-		return store.writeJSON(store.projectDir(proj)+"/status.json", st)
-	})
 }

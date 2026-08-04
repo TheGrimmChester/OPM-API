@@ -40,8 +40,12 @@ Local folder / `path` create payloads are rejected.
 - `PATCH /api/projects/{id}/tasks/{specId}`
 - `DELETE /api/projects/{id}/tasks/{specId}`
 - `POST /api/projects/{id}/tasks/{specId}/move` `{ toStatus }`
+- `POST /api/projects/{id}/tasks/{specId}/approve` → move `human_review` → `queue` (AutoCursor approve-for-coding)
 - `GET /api/projects/{id}/tasks/{specId}/plan`
 - `GET /api/projects/{id}/tasks/{specId}/progress`
+- `GET /api/projects/{id}/tasks/{specId}/spec` → `{ markdown }`
+- `GET /api/projects/{id}/tasks/{specId}/logs` → `{ logs: { planning?, implementation?, validation? } }`
+- `GET /api/projects/{id}/tasks/{specId}/actions` → valid run actions (`planning`, `implementation`, `review`, `qaFix`, `approve`, …)
 
 Columns: `backlog`, `queue`, `in_progress`, `review`, `human_review`, `done`.
 
@@ -49,7 +53,7 @@ Columns: `backlog`, `queue`, `in_progress`, `review`, `human_review`, `done`.
 
 - `GET|PUT /api/projects/{id}/roadmap`
 - `GET|PUT /api/projects/{id}/ideation`
-- `GET /api/projects/{id}/changelog` → `{ markdown }`
+- `GET|PUT /api/projects/{id}/changelog` → `{ markdown }`
 
 ## Status and jobs
 
@@ -59,6 +63,6 @@ Columns: `backlog`, `queue`, `in_progress`, `review`, `human_review`, `done`.
 - `GET /api/projects/{id}/jobs/{runId}`
 - `POST /api/projects/{id}/jobs/{runId}/cancel`
 
-Job actions include: `run-planning`, `run-implementation`, `run-review`, `run-qa-fix`, `run-roadmap-discovery`, `run-roadmap-features`, `run-ideation`, `generate-changelog`.
+Job actions include: `run-planning`, `run-implementation`, `run-review`, `run-qa-fix`, `run-followup-planning`, `run-roadmap-discovery`, `run-roadmap-features`, `run-ideation`, `generate-changelog`.
 
-Jobs prepare an ephemeral clone (via ORA clone credentials when configured), run the stub/orchestrator path, then delete the workspace. Hardened `docker run` argv is prepared via `Open-Job-Go`.
+Jobs prepare an ephemeral clone (via ORA clone credentials when configured), then run the **builtin** executor (`execution: "builtin"`) which writes real `spec.md` / `implementation_plan.json` / `progress.json` / review artifacts / changelog. Containerized Cursor-agent spawn (orchestrator + `opm-runner-task:nas`) remains follow-on — the runner image is still a placeholder.

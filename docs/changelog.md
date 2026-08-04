@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Docs: remaining backlog (stub jobs, plan UI, DnD, real runner spawn).
+- AutoCursor parity: builtin job runner writes `spec.md`, plan, progress, review/QA artifacts, changelog; `POST …/approve`, `GET …/spec|logs|actions`; `PUT …/changelog`.
+- Jobs: honest stub execution — `execution: "stub"` + operator `message` (workspace + docker argv only; container not run). Default runner tag `nas`.
+- Docs: remaining backlog (plan UI, DnD, real runner spawn).
 - Bump `open-tenant-go` to v0.2.2 so auth-enforced list scope matches `WriteTenant` defaults.
 - Docs: tenant header defaults under auth; NAS curl examples in interop/security/api.
 - Auth via Open-Auth-Go `Gate` (delete local `auth.go` duplicate; validate-only, no local login routes).
