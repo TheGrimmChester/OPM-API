@@ -89,4 +89,25 @@ Columns: `backlog`, `queue`, `in_progress`, `review`, `human_review`, `done`.
 
 Job actions include: `run-planning`, `run-implementation`, `run-review`, `run-qa-fix`, `run-followup-planning`, `recover-subtask`, `mark-stuck`, `pause-task`, `resume-task`, `run-roadmap-discovery`, `run-roadmap-features`, `run-ideation`, `generate-changelog`.
 
-Jobs prepare an ephemeral clone (via ORA clone credentials when configured). When `/api/spawn-probe` reports `spawnReady: true` (docker CLI + daemon + `opm-runner-task:nas`), the job **docker-runs** one hardened ephemeral runner (`execution: "container"`), which invokes an OpenAI-compatible model when `OPM_MODEL_API_KEY` is set and writes `/out/result.json`. The control plane persists model output into `spec.md` / plan / progress / review / logs. Without a key (or on model failure), the runner reports `mode=fallback` and shared builtin helpers still write artifacts. On spawn failure or `OPM_FORCE_BUILTIN=1`, jobs fall back to builtin-only (`execution: "builtin"`). Orchestrator `/api/spawn-probe` includes `modelConfigured` / `modelHonesty`.
+Jobs prepare an ephemeral clone (via ORA clone credentials when configured). When `/api/spawn-probe` reports `spawnReady: true` (docker CLI + daemon + `opm-runner-task:nas`), the job **docker-runs** one hardened ephemeral runner (`execution: "container"`), which invokes a chat-completions-compatible model endpoint when `OPM_MODEL_API_KEY` is set and writes `/out/result.json`. The control plane persists model output into `spec.md` / plan / progress / review / logs. Without a key (or on model failure), the runner reports `mode=fallback` and shared builtin helpers still write artifacts. On spawn failure or `OPM_FORCE_BUILTIN=1`, jobs fall back to builtin-only (`execution: "builtin"`). Orchestrator `/api/spawn-probe` includes `modelConfigured` / `modelHonesty`.
+
+### What jobs do and do not do
+
+Three limits are easy to misread from the action list above. Each is a property of the current code, not a
+configuration you can switch on:
+
+- **Jobs never modify the cloned repository.** `prepareJobWorkspace` creates the clone and `executeJob`
+  discards the handle immediately (`job_runner.go:45-50`, `_ = workDir`). The only git commands in this service
+  are two `git clone` invocations (`workspace.go:57`, `:69`) — there is no `git add`, `commit`, `push`, branch
+  creation, or pull-request call anywhere. `run-implementation` advances the **plan**: it flips the next
+  subtask to `completed` (`job_runner.go:321-341`) and, on the model path, appends a section to
+  `IMPLEMENTATION_NOTES.md` (`model_apply.go:111-135`). `run-review` derives PASS/FAIL from plan completeness
+  (`model_apply.go:146-152`), not from reading a diff.
+- **`run-roadmap-discovery`, `run-roadmap-features`, and `run-ideation` record an acknowledgement only.** All
+  three route to `builtinMetaNote` (`job_runner.go:147-148`), which appends one project-log line and returns
+  `"builtin placeholder — agent prompts not wired yet"` (`job_runner.go:688-691`). The job reports
+  `state: completed`, so treat a success here as "the request was logged", not "content was generated".
+  Setting `OPM_MODEL_API_KEY` does not change this: `applyRunnerResult` handles planning, implementation, and
+  review only and returns `false` for everything else (`model_apply.go:17-29`).
+- **`skip-to-phase` is not implemented.** `POST …/jobs` with that action falls into the `default` branch and
+  fails with `unsupported action` (`job_runner.go:149-151`). There is no `targetPhase` field on the job model.

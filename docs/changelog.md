@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Correction (2026-08-04): the Projects v2 entry below overstates item sync. Binding a project, creating draft
+  items, and Status-on-move work, but **title refresh for an existing draft item does nothing** —
+  `ORA-API/github_projects.go:294-302` returns `nil` without calling the API and the error is discarded at
+  `ORA-API/peer_scm_pm.go:268`, so a renamed task never reaches the board and no failure is reported. Original
+  entry kept below as written.
 - Feature: GitHub Milestones + Projects v2 bind/sync via ORA peer `scm:pm` (`…/github/milestones`, `…/github/projects`, task/roadmap fields, Status sync on board move).
 
 - Feature: Model-backed planning/implementation/review inside `opm-runner-task` (OpenAI-compatible `OPM_MODEL_*` env from compose; honest fallback + builtin artifacts when key missing).
