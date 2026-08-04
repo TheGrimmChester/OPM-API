@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Docs: remaining backlog (stub jobs, plan UI, DnD, real runner spawn).
+- Auth: adopt Open-Auth-Go per-user project ACLs (`project_ids` / `EnforceProjectACL` on Gate middleware). Restricted JWTs get **403** on non-member `X-Project-ID`; role `admin` stays unrestricted. No second membership store — hub-minted claims only.
+- Builtin job runner writes `spec.md`, plan, progress, review/QA artifacts, changelog; `POST …/approve`, `GET …/spec|logs|actions`; `PUT …/changelog`.
+- Default runner tag `nas`.
 - Bump `open-tenant-go` to v0.2.2 so auth-enforced list scope matches `WriteTenant` defaults.
 - Docs: tenant header defaults under auth; NAS curl examples in interop/security/api.
 - Auth via Open-Auth-Go `Gate` (delete local `auth.go` duplicate; validate-only, no local login routes).
