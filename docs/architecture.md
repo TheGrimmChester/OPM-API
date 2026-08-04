@@ -5,7 +5,7 @@
 | Component | Image / binary | Role |
 |-----------|----------------|------|
 | `opm-api` | `opm-api` | HTTP control plane: GitHub-linked projects, board, tasks, roadmap, ideation, jobs |
-| `opm-orchestrator` | same binary, `orchestrator` command | Spawn probe + health; shares image with API (docker CLI + sock) |
+| `opm-orchestrator` | same binary, `orchestrator` command | Spawn probe + health **only** — it schedules nothing. `main.go:103-121` registers `/api/health` and `/api/spawn-probe` and logs itself as a "job scheduler stub" (`main.go:114`); `opm-api` spawns runner containers in-process (`job_runner.go:60-91`). Shares the API image (docker CLI + sock) |
 | `opm-runner-task` | ephemeral | Task-automation sandbox (one container per job phase) |
 | `opm-dashboard` | separate repo | Web dashboard (Vite SPA + nginx) — browser only; talks only to `opm-api` |
 
@@ -57,6 +57,12 @@ $OPM_DATA_DIR/projects/<projectId>/
 Specs may also be committed in-repo later; OPM board state remains keyed by `owner/repo` + task id in the API store.
 
 **Job workspaces**: `$OPM_JOB_TMP/<runId>/repo` (default `/tmp/opm-jobs/...`) — created for a run, removed afterward.
+
+The clone is currently **created and not used**: `executeJob` calls `prepareJobWorkspace` and then discards the
+path (`job_runner.go:45-50`, `_ = workDir`). Nothing reads or writes files in it, and the service contains no
+`git add` / `commit` / `push` — only `git clone` (`workspace.go:57`, `:69`). Job output lands entirely in
+`$OPM_DATA_DIR`, never in the repository. A code-delivery path (branch, commit, pull request) is a design gap,
+not a disabled feature.
 
 ## Kanban columns
 
