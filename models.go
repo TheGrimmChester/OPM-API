@@ -177,6 +177,10 @@ type Job struct {
 	Execution string `json:"execution,omitempty"`
 	// Message is operator-facing status (spawn + artifact outcome).
 	Message string `json:"message,omitempty"`
+	// TargetPhase is 1-based plan phase number for skip-to-phase.
+	TargetPhase int `json:"targetPhase,omitempty"`
+	// IdeationType optionally scopes run-ideation to one IdeationTypes key.
+	IdeationType string `json:"ideationType,omitempty"`
 }
 
 // Roadmap document.
