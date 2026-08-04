@@ -7,9 +7,14 @@
   `ORA-API/github_projects.go:294-302` returns `nil` without calling the API and the error is discarded at
   `ORA-API/peer_scm_pm.go:268`, so a renamed task never reaches the board and no failure is reported. Original
   entry kept below as written.
+- Feature: Roadmap/ideation agent generators — `run-roadmap-discovery`, `run-roadmap-features`, and `run-ideation` write vision/phases/features/ideas (builtin helpers after optional container spawn); optional `ideationType` on enqueue.
+- Feature: Skip-to-phase — `skip-to-phase` job with `targetPhase` marks earlier plan subtasks complete and advances progress; exposed on task actions.
+
+- Feature: two-way GitHub Issue sync for tasks (`…/github/issues/{link,unlink,push,pull}` via ORA peer `scm:pm`). Push sends task title/description and the board column's issue state; pull mirrors issue state, assignee, labels and milestone, moving the task on the `done`/reopen boundary only. Title divergence is reported rather than resolved (`adoptTitle` opts in). Failures persist on the task as `githubIssueSyncError` and in the `github-issue-sync` spec log with a machine-readable `status`.
 - Feature: GitHub Milestones + Projects v2 bind/sync via ORA peer `scm:pm` (`…/github/milestones`, `…/github/projects`, task/roadmap fields, Status sync on board move).
 
 - Feature: Model-backed planning/implementation/review inside `opm-runner-task` (OpenAI-compatible `OPM_MODEL_*` env from compose; honest fallback + builtin artifacts when key missing).
+
 
 - Feature: Containerized task spawn — docker CLI in `opm-api` image; jobs `docker run` `opm-runner-task` when spawnReady; builtin fallback via `OPM_FORCE_BUILTIN` or spawn failure; `/api/spawn-probe` returns `spawnReady: true` when docker + image work.
 - Auth: adopt Open-Auth-Go per-user project ACLs (`project_ids` / `EnforceProjectACL` on Gate middleware). Restricted JWTs get **403** on non-member `X-Project-ID`; role `admin` stays unrestricted. No second membership store — hub-minted claims only.

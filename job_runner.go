@@ -144,8 +144,14 @@ func executeJob(store *Store, j Job) {
 			resultMsg, err = builtinResume(store, j)
 		case "generate-changelog":
 			resultMsg, err = builtinChangelog(store, j)
-		case "run-roadmap-discovery", "run-roadmap-features", "run-ideation":
-			resultMsg, err = builtinMetaNote(store, j)
+		case "run-roadmap-discovery":
+			resultMsg, err = builtinRoadmapDiscovery(store, j)
+		case "run-roadmap-features":
+			resultMsg, err = builtinRoadmapFeatures(store, j)
+		case "run-ideation":
+			resultMsg, err = builtinIdeation(store, j)
+		case "skip-to-phase":
+			resultMsg, err = builtinSkipToPhase(store, j)
 		default:
 			resultMsg = "Unknown action; no artifacts written."
 			err = fmt.Errorf("unsupported action %q", j.Action)
@@ -178,7 +184,7 @@ func executeJob(store *Store, j Job) {
 	_ = store.UpdateJob(j.ProjectID, j)
 
 	switch j.Action {
-	case "mark-stuck", "pause-task", "resume-task", "recover-subtask":
+	case "mark-stuck", "pause-task", "resume-task", "recover-subtask", "skip-to-phase":
 		// These actions write their own project status.json.
 	default:
 		st := idleStatus()
@@ -435,7 +441,8 @@ func builtinQaFix(store *Store, j Job) (string, error) {
 
 func taskPausedBlock(store *Store, j Job) (bool, string) {
 	switch j.Action {
-	case "pause-task", "resume-task", "recover-subtask", "mark-stuck", "generate-changelog":
+	case "pause-task", "resume-task", "recover-subtask", "mark-stuck", "generate-changelog",
+		"skip-to-phase", "run-roadmap-discovery", "run-roadmap-features", "run-ideation":
 		return false, ""
 	}
 	if j.SpecID == "" {
@@ -685,9 +692,324 @@ func builtinChangelog(store *Store, j Job) (string, error) {
 	return fmt.Sprintf("Changelog generated (builtin) from %d done task(s).", len(doneIDs)), nil
 }
 
-func builtinMetaNote(store *Store, j Job) (string, error) {
-	_ = store.AppendProjectLog(j.ProjectID, j.Action, fmt.Sprintf("[%s] %s acknowledged (builtin placeholder — agent prompts not wired yet)\n", j.RunID, j.Action))
-	return fmt.Sprintf("%s recorded (builtin placeholder). Roadmap/ideation agents need runner prompts next.", j.Action), nil
+func projectContext(store *Store, projectID string) (Project, []string, error) {
+	p, err := store.GetProject(projectID)
+	if err != nil {
+		return p, nil, err
+	}
+	tasks, _ := store.ListTasks(projectID)
+	titles := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		if strings.TrimSpace(t.Title) != "" {
+			titles = append(titles, t.Title)
+		}
+	}
+	return p, titles, nil
+}
+
+func shortID(prefix string) string {
+	return fmt.Sprintf("%s-%d", prefix, nowUTC().UnixNano()%1_000_000_000)
+}
+
+func builtinRoadmapDiscovery(store *Store, j Job) (string, error) {
+	p, taskTitles, err := projectContext(store, j.ProjectID)
+	if err != nil {
+		return "Project not found", err
+	}
+	rm, _ := store.GetRoadmap(j.ProjectID)
+	name := nz(p.Name, p.OwnerRepo)
+	if rm.ID == "" {
+		rm.ID = "roadmap-1"
+	}
+	if rm.ProjectName == "" {
+		rm.ProjectName = name
+	}
+	if rm.Version == "" {
+		rm.Version = "0.1.0"
+	}
+	rm.Vision = fmt.Sprintf(
+		"Deliver a reliable %s experience for operators: clear board workflow, automated task planning, and a living product roadmap grounded in %s.",
+		name, nz(p.OwnerRepo, "the linked GitHub repository"),
+	)
+	rm.TargetAudience = "Engineering and product operators who manage GitHub-linked work in OPM."
+	if rm.Metadata == nil {
+		rm.Metadata = map[string]any{}
+	}
+	rm.Metadata["last_discovery_run"] = j.RunID
+	rm.Metadata["discovered_at"] = nowUTC().Format(time.RFC3339)
+	if len(taskTitles) > 0 {
+		rm.Metadata["board_signals"] = taskTitles
+	}
+
+	if len(rm.Phases) == 0 {
+		rm.Phases = []RoadmapPhase{
+			{ID: shortID("phase"), Name: "Foundation", Description: "Core board, auth, and project linking for " + name, Order: 1, Status: "planned", Features: []string{}},
+			{ID: shortID("phase"), Name: "Automation", Description: "Task planning, implementation, and review loops", Order: 2, Status: "planned", Features: []string{}},
+			{ID: shortID("phase"), Name: "Insights", Description: "Roadmap, ideation, and changelog quality for operators", Order: 3, Status: "planned", Features: []string{}},
+		}
+	} else {
+		for i := range rm.Phases {
+			if rm.Phases[i].Status == "" {
+				rm.Phases[i].Status = "planned"
+			}
+			if rm.Phases[i].Order == 0 {
+				rm.Phases[i].Order = i + 1
+			}
+		}
+	}
+
+	if err := store.PutRoadmap(j.ProjectID, rm); err != nil {
+		return "Failed to write roadmap.json", err
+	}
+	_ = store.AppendProjectLog(j.ProjectID, "run-roadmap-discovery",
+		fmt.Sprintf("[%s] discovery wrote vision + %d phase(s) (builtin)\n", j.RunID, len(rm.Phases)))
+	return fmt.Sprintf("Roadmap discovery (builtin): vision set; %d phase(s); %d board task signal(s).", len(rm.Phases), len(taskTitles)), nil
+}
+
+func builtinRoadmapFeatures(store *Store, j Job) (string, error) {
+	p, taskTitles, err := projectContext(store, j.ProjectID)
+	if err != nil {
+		return "Project not found", err
+	}
+	rm, err := store.GetRoadmap(j.ProjectID)
+	if err != nil {
+		return "Roadmap missing", err
+	}
+	if len(rm.Phases) == 0 {
+		if _, err := builtinRoadmapDiscovery(store, j); err != nil {
+			return "No phases — discovery failed", err
+		}
+		rm, err = store.GetRoadmap(j.ProjectID)
+		if err != nil || len(rm.Phases) == 0 {
+			return "No roadmap phases after discovery", fmt.Errorf("phases missing")
+		}
+	}
+
+	existing := map[string]bool{}
+	for _, f := range rm.Features {
+		existing[strings.ToLower(strings.TrimSpace(f.Title))] = true
+	}
+
+	added := 0
+	seedTitles := append([]string{}, taskTitles...)
+	if len(seedTitles) == 0 {
+		seedTitles = []string{
+			"Board workflow polish",
+			"Task automation reliability",
+			"Operator visibility",
+		}
+	}
+	for i, ph := range rm.Phases {
+		candidates := []string{
+			fmt.Sprintf("%s: %s", ph.Name, seedTitles[i%len(seedTitles)]),
+			fmt.Sprintf("%s checklist for %s", ph.Name, nz(p.Name, p.OwnerRepo)),
+		}
+		for _, title := range candidates {
+			key := strings.ToLower(title)
+			if existing[key] {
+				continue
+			}
+			fid := shortID("feat")
+			feat := RoadmapFeature{
+				ID:                 fid,
+				Title:              title,
+				Description:        fmt.Sprintf("Agent-assisted feature for phase %q based on project %s.", ph.Name, nz(p.OwnerRepo, p.Name)),
+				Rationale:          "Generated by OPM builtin roadmap features agent from board/project signals.",
+				Priority:           "medium",
+				Complexity:         "m",
+				Impact:             "operator productivity",
+				PhaseID:            ph.ID,
+				Status:             "planned",
+				AcceptanceCriteria: []string{"Behavior documented", "Verified on board or jobs UI"},
+			}
+			rm.Features = append(rm.Features, feat)
+			rm.Phases[i].Features = append(rm.Phases[i].Features, fid)
+			existing[key] = true
+			added++
+		}
+	}
+	if rm.Metadata == nil {
+		rm.Metadata = map[string]any{}
+	}
+	rm.Metadata["last_features_run"] = j.RunID
+
+	if err := store.PutRoadmap(j.ProjectID, rm); err != nil {
+		return "Failed to write roadmap features", err
+	}
+	_ = store.AppendProjectLog(j.ProjectID, "run-roadmap-features",
+		fmt.Sprintf("[%s] features agent added %d feature(s) (builtin)\n", j.RunID, added))
+	return fmt.Sprintf("Roadmap features (builtin): added %d feature(s) across %d phase(s).", added, len(rm.Phases)), nil
+}
+
+func builtinIdeation(store *Store, j Job) (string, error) {
+	p, taskTitles, err := projectContext(store, j.ProjectID)
+	if err != nil {
+		return "Project not found", err
+	}
+	ideas, _ := store.GetIdeation(j.ProjectID)
+	if ideas == nil {
+		ideas = emptyIdeation()
+	}
+
+	types := IdeationTypes
+	if t := strings.TrimSpace(j.IdeationType); t != "" {
+		types = []string{t}
+	}
+
+	signal := "general product quality"
+	if len(taskTitles) > 0 {
+		signal = taskTitles[0]
+	}
+	projLabel := nz(p.OwnerRepo, p.Name)
+	templates := map[string][]struct{ title, desc string }{
+		"code_improvements": {
+			{"Simplify " + signal + " paths", "Reduce complexity around " + signal + " in " + projLabel},
+			{"Shared helpers for board artifacts", "Consolidate repeated plan/progress helpers for maintainability"},
+		},
+		"security": {
+			{"Tighten tenant header checks", "Audit org/project header enforcement on sensitive OPM routes"},
+			{"Review job cancel authorization", "Ensure cancel and recover actions respect project ACL"},
+		},
+		"performance": {
+			{"Cache project board reads", "Trim repeated filesystem reads for hot board polls"},
+			{"Batch job status updates", "Reduce write amplification during long implementation loops"},
+		},
+		"documentation": {
+			{"Document agent job actions", "Operator guide for roadmap, ideation, and skip-to-phase jobs"},
+			{"NAS verify checklist", "Curl sequence for health, jobs, and roadmap generators"},
+		},
+		"ui_ux": {
+			{"Clearer job outcome messaging", "Surface execution + message on roadmap/ideation generate buttons"},
+			{"Skip-to-phase affordance", "Let operators jump plan phases from task detail"},
+		},
+		"code_quality": {
+			{"Expand builtin generator tests", "Cover roadmap discovery/features and ideation merge behavior"},
+			{"Normalize ideation type keys", "Keep underscored types consistent across API and UI"},
+		},
+	}
+
+	added := 0
+	now := nowUTC().Format(time.RFC3339)
+	for _, typ := range types {
+		bucket := ideas[typ]
+		if bucket == nil {
+			bucket = []Idea{}
+		}
+		have := map[string]bool{}
+		for _, idea := range bucket {
+			have[strings.ToLower(strings.TrimSpace(idea.Title))] = true
+		}
+		for _, tmpl := range templates[typ] {
+			if have[strings.ToLower(tmpl.title)] {
+				continue
+			}
+			bucket = append(bucket, Idea{
+				ID:              shortID("idea"),
+				Type:            typ,
+				Title:           tmpl.title,
+				Description:     tmpl.desc,
+				Rationale:       "Generated by OPM builtin ideation agent.",
+				EstimatedEffort: "S",
+				Status:          "open",
+				CreatedAt:       now,
+			})
+			have[strings.ToLower(tmpl.title)] = true
+			added++
+		}
+		ideas[typ] = bucket
+	}
+
+	if err := store.PutIdeation(j.ProjectID, ideas); err != nil {
+		return "Failed to write ideation.json", err
+	}
+	_ = store.AppendProjectLog(j.ProjectID, "run-ideation",
+		fmt.Sprintf("[%s] ideation agent added %d idea(s) types=%v (builtin)\n", j.RunID, added, types))
+	return fmt.Sprintf("Ideation (builtin): added %d idea(s) across %d type(s).", added, len(types)), nil
+}
+
+func builtinSkipToPhase(store *Store, j Job) (string, error) {
+	if j.SpecID == "" {
+		return "skip-to-phase requires specId", fmt.Errorf("specId required")
+	}
+	if j.TargetPhase < 1 {
+		return "skip-to-phase requires targetPhase >= 1", fmt.Errorf("targetPhase required")
+	}
+	plan, err := store.GetPlan(j.ProjectID, j.SpecID)
+	if err != nil || len(plan.Phases) == 0 {
+		return "No plan — run planning first", fmt.Errorf("plan missing")
+	}
+
+	found := false
+	targetName := ""
+	skipped := 0
+	for i := range plan.Phases {
+		ph := &plan.Phases[i]
+		num := ph.Phase
+		if num == 0 {
+			num = i + 1
+		}
+		if num == j.TargetPhase {
+			found = true
+			targetName = ph.Name
+		}
+		if num < j.TargetPhase {
+			for k := range ph.Subtasks {
+				st := &ph.Subtasks[k]
+				if st.Status != "completed" && st.Status != "done" {
+					st.Status = "completed"
+					skipped++
+				}
+			}
+		}
+	}
+	if !found {
+		return fmt.Sprintf("No plan phase %d", j.TargetPhase), fmt.Errorf("unknown targetPhase")
+	}
+
+	plan.Status = "in_progress"
+	plan.PlanStatus = "in_progress"
+	if err := store.PutPlan(j.ProjectID, j.SpecID, plan); err != nil {
+		return "Failed to update plan after skip", err
+	}
+
+	total, done := countPlanSubtasks(plan)
+	prog, _ := store.GetProgress(j.ProjectID, j.SpecID)
+	prog.Paused = false
+	prog.IsRunning = false
+	prog.Action = "skip-to-phase"
+	prog.StuckSubtaskID = ""
+	prog.Progress = pct(done, total)
+	prog.SubtaskCompleted = done
+	prog.SubtaskTotal = total
+	prog.CurrentPhaseName = nz(targetName, fmt.Sprintf("Phase %d", j.TargetPhase))
+	prog.RunID = j.RunID
+	_ = store.PutProgress(j.ProjectID, j.SpecID, prog)
+
+	toStatus := "in_progress"
+	for _, ph := range plan.Phases {
+		num := ph.Phase
+		if num == j.TargetPhase && ph.Type == "review" {
+			toStatus = "review"
+		}
+		if num == j.TargetPhase && ph.Type == "planning" {
+			toStatus = "queue"
+		}
+	}
+	_, _ = store.MoveTask(j.ProjectID, j.SpecID, toStatus)
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+		fmt.Sprintf("[%s] skip-to-phase → %d (%s); completed %d prior subtask(s)\n", j.RunID, j.TargetPhase, targetName, skipped))
+
+	st := idleStatus()
+	st.State = "idle"
+	st.Spec = j.SpecID
+	st.LastUpdate = nowUTC().Format(time.RFC3339)
+	st.RunID = j.RunID
+	_ = store.withProject(j.ProjectID, func(proj Project) error {
+		return store.writeJSON(store.projectDir(proj)+"/status.json", st)
+	})
+
+	return fmt.Sprintf("Skip-to-phase (builtin): jumped to phase %d (%s); marked %d earlier subtask(s) complete; status %s.",
+		j.TargetPhase, targetName, skipped, toStatus), nil
 }
 
 func countPlanSubtasks(plan ImplementationPlan) (total, done int) {
