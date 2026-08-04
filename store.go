@@ -528,6 +528,29 @@ func (s *Store) UpdateTask(projectID, specID string, patch map[string]interface{
 		if v, ok := patch["githubProjectItemId"].(string); ok {
 			t.GithubProjectItemID = strings.TrimSpace(v)
 		}
+		applyIssuePatch(&t, patch)
+		t.UpdatedAt = nowUTC()
+		if err := s.writeJSON(path, t); err != nil {
+			return err
+		}
+		out = t
+		return nil
+	})
+	return out, err
+}
+
+// MutateTask applies mut to the stored task and persists it. Used by the GitHub
+// Issue sync, which updates several related fields (link, mirror, sync error)
+// atomically rather than through a field-by-field patch map.
+func (s *Store) MutateTask(projectID, specID string, mut func(*Task)) (Task, error) {
+	var out Task
+	err := s.withProject(projectID, func(p Project) error {
+		path := filepath.Join(s.projectDir(p), "specs", specID, "task.json")
+		var t Task
+		if err := s.readJSON(path, &t); err != nil {
+			return err
+		}
+		mut(&t)
 		t.UpdatedAt = nowUTC()
 		if err := s.writeJSON(path, t); err != nil {
 			return err
