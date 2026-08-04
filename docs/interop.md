@@ -44,7 +44,7 @@ Code-review and Repo Watch stay in ORA. OPM owns project/kanban/roadmap/task aut
 
 ## Tenant headers
 
-When `OPA_AUTH_REQUIRED=1`, send **`X-Organization-ID`** and **`X-Project-ID`** with the hub JWT on control-plane calls (and when proxying ORA connectors). Sibling ClickHouse products (OSA / OPL) return **empty lists** without these headers; OPM project registry filtering also keys off organization — always set them so scripts match the dashboard picker.
+When `OPA_AUTH_REQUIRED=1`, send **`X-Organization-ID`** and **`X-Project-ID`** with the hub JWT on control-plane calls (and when proxying ORA connectors). Sibling ClickHouse products (OSA / OPL) scope to **`default-org` / `default-project`** when headers are omitted (Open-Tenant-Go ≥ 0.2.2); OPM project registry filtering also keys off organization — always set them so scripts match the dashboard picker.
 
 ```bash
 TOKEN=$(curl -sf -X POST http://127.0.0.1:18080/api/auth/login \
