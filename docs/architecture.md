@@ -19,6 +19,9 @@ flowchart LR
   API --> FS[(OPM_DATA_DIR board/tasks)]
   API -->|tmp clone| TMP["/tmp/opm-jobs"]
   API -->|docker run when spawnReady| RUN[opm-runner-task]
+  TMP -->|read-only bind /repo| RUN
+  RUN -->|"files[] + commitMessage"| API
+  API -->|"push branch + open PR (scm:pr)"| ORA
   ORCH[opm-orchestrator] -->|spawn-probe| DOCKER[docker.sock]
   API -->|docker.sock| DOCKER
 ```
@@ -56,7 +59,34 @@ $OPM_DATA_DIR/projects/<projectId>/
 
 Specs may also be committed in-repo later; OPM board state remains keyed by `owner/repo` + task id in the API store.
 
-**Job workspaces**: `$OPM_JOB_TMP/<runId>/repo` (default `/tmp/opm-jobs/...`) — created for a run, removed afterward.
+**Job workspaces**: `$OPM_JOB_TMP/<runId>/repo` (default `/tmp/opm-jobs/...`) — created for a run, removed afterward. A delivery uses the same machinery under `$OPM_JOB_TMP/deliver-<uuid>/repo`.
+
+`specs/<specId>/changes.json` is the recorded change set: the `files[]` and
+`commitMessage` a runner produced, waiting to be delivered. It is written only by
+a run that genuinely produced source changes, and removed once delivered.
+
+## Code delivery chain
+
+An implementation job and a delivery are deliberately two steps, because the job
+workspace is ephemeral and the operator decides when code reaches the repository.
+
+```text
+run-implementation                     deliver
+──────────────────                     ───────
+clone repo (ORA scm:clone)             clone repo (ORA scm:clone)
+mount read-only at /repo                apply changes.json
+runner reads source, returns            git checkout -b opm/<specId>
+  files[] + commitMessage               git add -- <applied paths only>
+record specs/<specId>/changes.json      git commit
+                                        push (ORA scm:pr, Contents write)
+                                        open PR (ORA scm:pr)
+                                        persist branch/sha/PR on the task
+```
+
+The runner never writes to the repository: `/repo` is a read-only bind, and the
+runner's only output is the structured change set. Applying, committing and
+pushing happen in the control plane, which is the only component that validates
+paths and stages files.
 
 The clone is currently **created and not used**: `executeJob` calls `prepareJobWorkspace` and then discards the
 path (`job_runner.go:45-50`, `_ = workDir`). Nothing reads or writes files in it, and the service contains no

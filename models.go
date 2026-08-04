@@ -67,8 +67,25 @@ type Task struct {
 	// on the next success so the UI never shows a stale error, and never blanked
 	// on failure so a broken link cannot masquerade as healthy.
 	GithubIssueSyncError string    `json:"githubIssueSyncError,omitempty"`
-	CreatedAt            time.Time `json:"createdAt"`
-	UpdatedAt            time.Time `json:"updatedAt"`
+	// Code delivery: the branch pushed to the linked repository and the pull
+	// request opened from it. DeliveryFiles is the changed-file summary as it was
+	// actually committed — not what a runner proposed.
+	DeliveryBranch    string     `json:"deliveryBranch,omitempty"`
+	DeliveryCommitSha string     `json:"deliveryCommitSha,omitempty"`
+	DeliveryFiles     []string   `json:"deliveryFiles,omitempty"`
+	DeliveredAt       *time.Time `json:"deliveredAt,omitempty"`
+	PRNumber          int        `json:"prNumber,omitempty"`
+	PRURL             string     `json:"prUrl,omitempty"`
+	PRState           string     `json:"prState,omitempty"` // open | closed | merged
+	// DeliveryStatus is the machine-readable outcome of the last delivery attempt
+	// (see delivery.go). DeliveryError holds its reason when it failed; both are
+	// cleared on the next success so the UI never shows a stale failure, and
+	// DeliveryError is never blanked on failure so a broken delivery cannot
+	// masquerade as a shipped one.
+	DeliveryStatus string    `json:"deliveryStatus,omitempty"`
+	DeliveryError  string    `json:"deliveryError,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // Board maps column id → ordered spec ids.
