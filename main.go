@@ -34,6 +34,7 @@ func main() {
 		log.Fatalf("store: %v", err)
 	}
 
+	initAuthGate()
 	authRequired := authRequiredEnv()
 	if authRequired {
 		log.Printf("auth: ENABLED (OPA_AUTH_REQUIRED)")
