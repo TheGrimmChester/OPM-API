@@ -41,3 +41,20 @@ func TestPreferContainerSpawnForcedBuiltin(t *testing.T) {
 		t.Fatal("expected false when OPM_FORCE_BUILTIN=1")
 	}
 }
+
+func TestReplaceNetwork(t *testing.T) {
+	args := []string{"run", "--rm", "--network", "none", "opm-runner-task:nas"}
+	got := replaceNetwork(args, "bridge")
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "--network bridge") || strings.Contains(joined, "--network none") {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestInsertBeforeImage(t *testing.T) {
+	args := []string{"run", "--rm", "opm-runner-task:nas"}
+	got := insertBeforeImage(args, "opm-runner-task:nas", "-v", "/tmp/in:/in:ro")
+	if got[len(got)-1] != "opm-runner-task:nas" || got[len(got)-3] != "-v" {
+		t.Fatalf("%v", got)
+	}
+}

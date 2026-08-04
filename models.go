@@ -24,8 +24,12 @@ type Project struct {
 	OrganizationID string    `json:"organizationId,omitempty"`
 	HTMLURL        string    `json:"htmlUrl,omitempty"`
 	DefaultBranch  string    `json:"defaultBranch,omitempty"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	// GitHub Projects v2 binding for this OPM project (org/user project node id).
+	GithubProjectID    string `json:"githubProjectId,omitempty"`
+	GithubProjectTitle string `json:"githubProjectTitle,omitempty"`
+	GithubProjectURL   string `json:"githubProjectUrl,omitempty"`
+	CreatedAt          time.Time `json:"createdAt"`
+	UpdatedAt          time.Time `json:"updatedAt"`
 }
 
 type projectsFile struct {
@@ -42,8 +46,29 @@ type Task struct {
 	RequireReviewBeforeCoding bool      `json:"requireReviewBeforeCoding"`
 	IdeationID                string    `json:"ideationId,omitempty"`
 	IdeationTypeKey           string    `json:"ideationTypeKey,omitempty"`
-	CreatedAt                 time.Time `json:"createdAt"`
-	UpdatedAt                 time.Time `json:"updatedAt"`
+	// GitHub Milestone bind (repo milestones via ORA peer scm:pm).
+	GithubMilestoneNumber int    `json:"githubMilestoneNumber,omitempty"`
+	GithubMilestoneTitle  string `json:"githubMilestoneTitle,omitempty"`
+	GithubMilestoneURL    string `json:"githubMilestoneUrl,omitempty"`
+	// GitHub Projects v2 item bind.
+	GithubProjectID     string `json:"githubProjectId,omitempty"`
+	GithubProjectItemID string `json:"githubProjectItemId,omitempty"`
+	// GitHub Issue link in the project's linked repo (via ORA peer scm:pm).
+	// GithubIssueState/Title/Assignee/Labels mirror GitHub and are refreshed by
+	// pull; they are never treated as the source of truth for OPM fields.
+	GithubIssueNumber    int        `json:"githubIssueNumber,omitempty"`
+	GithubIssueURL       string     `json:"githubIssueUrl,omitempty"`
+	GithubIssueState     string     `json:"githubIssueState,omitempty"` // open | closed
+	GithubIssueTitle     string     `json:"githubIssueTitle,omitempty"`
+	GithubIssueAssignee  string     `json:"githubIssueAssignee,omitempty"`
+	GithubIssueLabels    []string   `json:"githubIssueLabels,omitempty"`
+	GithubIssueSyncedAt  *time.Time `json:"githubIssueSyncedAt,omitempty"`
+	// GithubIssueSyncError holds the last push/pull failure reason. It is cleared
+	// on the next success so the UI never shows a stale error, and never blanked
+	// on failure so a broken link cannot masquerade as healthy.
+	GithubIssueSyncError string    `json:"githubIssueSyncError,omitempty"`
+	CreatedAt            time.Time `json:"createdAt"`
+	UpdatedAt            time.Time `json:"updatedAt"`
 }
 
 // Board maps column id → ordered spec ids.
@@ -177,6 +202,10 @@ type RoadmapPhase struct {
 	Order       int      `json:"order"`
 	Status      string   `json:"status"`
 	Features    []string `json:"features"`
+	// Optional GitHub Milestone bind for this phase.
+	GithubMilestoneNumber int    `json:"github_milestone_number,omitempty"`
+	GithubMilestoneTitle  string `json:"github_milestone_title,omitempty"`
+	GithubMilestoneURL    string `json:"github_milestone_url,omitempty"`
 }
 
 type RoadmapFeature struct {
@@ -192,6 +221,11 @@ type RoadmapFeature struct {
 	Status              string   `json:"status"`
 	AcceptanceCriteria  []string `json:"acceptance_criteria,omitempty"`
 	UserStories         []string `json:"user_stories,omitempty"`
+	GithubMilestoneNumber int    `json:"github_milestone_number,omitempty"`
+	GithubMilestoneTitle  string `json:"github_milestone_title,omitempty"`
+	GithubMilestoneURL    string `json:"github_milestone_url,omitempty"`
+	GithubProjectID       string `json:"github_project_id,omitempty"`
+	GithubProjectItemID   string `json:"github_project_item_id,omitempty"`
 }
 
 // Ideation stores ideas grouped by type key.

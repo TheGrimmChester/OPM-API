@@ -179,6 +179,30 @@ func (s *Store) CreateProject(in Project) (Project, error) {
 	return p, nil
 }
 
+// BindGitHubProject sets the Projects v2 binding on a linked OPM project registry entry.
+func (s *Store) BindGitHubProject(projectID, ghProjectID, title, url string) (Project, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var f projectsFile
+	if err := s.readJSON(s.registryPath(), &f); err != nil {
+		return Project{}, err
+	}
+	for i := range f.Projects {
+		if f.Projects[i].ID != projectID {
+			continue
+		}
+		f.Projects[i].GithubProjectID = strings.TrimSpace(ghProjectID)
+		f.Projects[i].GithubProjectTitle = strings.TrimSpace(title)
+		f.Projects[i].GithubProjectURL = strings.TrimSpace(url)
+		f.Projects[i].UpdatedAt = nowUTC()
+		if err := s.writeJSON(s.registryPath(), f); err != nil {
+			return Project{}, err
+		}
+		return f.Projects[i], nil
+	}
+	return Project{}, fmt.Errorf("project not found")
+}
+
 func normalizeOwnerRepo(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "https://github.com/")
@@ -484,6 +508,49 @@ func (s *Store) UpdateTask(projectID, specID string, patch map[string]interface{
 		if v, ok := patch["requireReviewBeforeCoding"].(bool); ok {
 			t.RequireReviewBeforeCoding = v
 		}
+		if v, ok := patch["githubMilestoneNumber"].(float64); ok {
+			t.GithubMilestoneNumber = int(v)
+			if t.GithubMilestoneNumber <= 0 {
+				t.GithubMilestoneNumber = 0
+				t.GithubMilestoneTitle = ""
+				t.GithubMilestoneURL = ""
+			}
+		}
+		if v, ok := patch["githubMilestoneTitle"].(string); ok {
+			t.GithubMilestoneTitle = v
+		}
+		if v, ok := patch["githubMilestoneUrl"].(string); ok {
+			t.GithubMilestoneURL = v
+		}
+		if v, ok := patch["githubProjectId"].(string); ok {
+			t.GithubProjectID = strings.TrimSpace(v)
+		}
+		if v, ok := patch["githubProjectItemId"].(string); ok {
+			t.GithubProjectItemID = strings.TrimSpace(v)
+		}
+		applyIssuePatch(&t, patch)
+		t.UpdatedAt = nowUTC()
+		if err := s.writeJSON(path, t); err != nil {
+			return err
+		}
+		out = t
+		return nil
+	})
+	return out, err
+}
+
+// MutateTask applies mut to the stored task and persists it. Used by the GitHub
+// Issue sync, which updates several related fields (link, mirror, sync error)
+// atomically rather than through a field-by-field patch map.
+func (s *Store) MutateTask(projectID, specID string, mut func(*Task)) (Task, error) {
+	var out Task
+	err := s.withProject(projectID, func(p Project) error {
+		path := filepath.Join(s.projectDir(p), "specs", specID, "task.json")
+		var t Task
+		if err := s.readJSON(path, &t); err != nil {
+			return err
+		}
+		mut(&t)
 		t.UpdatedAt = nowUTC()
 		if err := s.writeJSON(path, t); err != nil {
 			return err
