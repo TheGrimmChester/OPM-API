@@ -682,6 +682,7 @@ type TaskValidActions struct {
 	MarkStuck         bool `json:"markStuck"`
 	Pause             bool `json:"pause"`
 	Resume            bool `json:"resume"`
+	SkipToPhase       bool `json:"skipToPhase"`
 }
 
 func (s *Store) GetTaskValidActions(projectID, specID string) (TaskValidActions, error) {
@@ -722,6 +723,8 @@ func (s *Store) GetTaskValidActions(projectID, specID string) (TaskValidActions,
 	out.MarkStuck = !paused && hasPlan && (status == "queue" || status == "in_progress" || status == "review") && stuckCount == 0
 	out.Pause = !paused && hasPlan && (status == "queue" || status == "in_progress" || status == "review")
 	out.Resume = paused
+	out.SkipToPhase = !paused && hasPlan && len(plan.Phases) > 1 &&
+		(status == "queue" || status == "in_progress" || status == "review")
 	return out, nil
 }
 
@@ -986,7 +989,7 @@ func mapActionToState(action string) string {
 	switch action {
 	case "run-planning", "run-followup-planning", "run-roadmap-discovery", "run-roadmap-features", "run-ideation":
 		return "planning"
-	case "run-implementation":
+	case "run-implementation", "skip-to-phase":
 		return "building"
 	case "run-qa-fix", "run-review":
 		return "qa"
