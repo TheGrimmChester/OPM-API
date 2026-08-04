@@ -73,6 +73,10 @@ func handleProjectRoute(store *Store) http.HandlerFunc {
 			writeError(w, 404, err.Error())
 			return
 		}
+		// Selected-project gate: path and X-Project-ID must agree (pin when unset).
+		if !enforcePathProjectHeader(w, r, projectID) {
+			return
+		}
 
 		if len(parts) == 1 {
 			switch r.Method {
@@ -129,6 +133,8 @@ func handleProjectRoute(store *Store) http.HandlerFunc {
 			writeJSON(w, st)
 		case "jobs":
 			handleJobs(w, r, store, projectID, parts[2:])
+		case "github":
+			handleProjectGitHub(w, r, store, projectID, parts[2:])
 		default:
 			writeError(w, 404, "not found")
 		}
@@ -248,6 +254,9 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 		if err != nil {
 			writeError(w, 400, err.Error())
 			return
+		}
+		if p, perr := store.GetProjectForOrg(projectID, resolveRequestOrg(r)); perr == nil {
+			syncTaskGitHubAfterMove(store, p, t)
 		}
 		writeJSON(w, t)
 	case "approve":
@@ -443,7 +452,7 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 			j.IdeationType = strings.TrimSpace(body.IdeationType)
 			if preferContainerSpawn() {
 				j.Execution = "container"
-				j.Message = "Queued: will docker-run " + runner + ", then write plan/spec/progress artifacts (builtin fallback on spawn failure)."
+				j.Message = "Queued: will docker-run " + runner + " (model when OPM_MODEL_API_KEY set; else fallback + builtin artifacts)."
 			} else {
 				j.Execution = "builtin"
 				j.Message = "Queued (builtin): will write plan/spec/progress artifacts in-process (container spawn not ready; set docker CLI + sock + runner image, or OPM_FORCE_BUILTIN=1)."
