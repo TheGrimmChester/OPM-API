@@ -75,7 +75,8 @@ func executeJob(store *Store, j Job) {
 	}
 
 	cloneNote := ""
-	if j.Action == "run-ideation" || j.Action == "run-roadmap-discovery" || j.Action == "run-roadmap-features" {
+	if j.Action == "run-ideation" || j.Action == "run-roadmap-discovery" ||
+		j.Action == "run-roadmap-features" || j.Action == "run-roadmap-competitor" {
 		cloneNote = cloneHonestyOperatorNote(p, workDir)
 	}
 
@@ -183,6 +184,10 @@ func executeJob(store *Store, j Job) {
 			resultMsg, err = builtinRoadmapDiscovery(store, j)
 		case "run-roadmap-features":
 			resultMsg, err = builtinRoadmapFeatures(store, j)
+		case "run-roadmap-competitor":
+			resultMsg, err = builtinRoadmapCompetitor(store, j)
+		case "run-roadmap-publish":
+			resultMsg, err = builtinRoadmapPublish(store, j)
 		case "run-ideation":
 			resultMsg, err = builtinIdeation(store, j)
 		case "skip-to-phase":
@@ -509,7 +514,8 @@ func builtinQaFix(store *Store, j Job) (string, error) {
 func taskPausedBlock(store *Store, j Job) (bool, string) {
 	switch j.Action {
 	case "pause-task", "resume-task", "recover-subtask", "mark-stuck", "generate-changelog",
-		"skip-to-phase", "run-roadmap-discovery", "run-roadmap-features", "run-ideation":
+		"skip-to-phase", "run-roadmap-discovery", "run-roadmap-features",
+		"run-roadmap-competitor", "run-roadmap-publish", "run-ideation":
 		return false, ""
 	}
 	if j.SpecID == "" {

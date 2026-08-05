@@ -22,8 +22,9 @@ const (
 	agentKeyReview           = "review"
 	agentKeyQAFix            = "qa_fix"
 	agentKeyIdeation         = "ideation"
-	agentKeyRoadmapDiscovery = "roadmap_discovery"
-	agentKeyRoadmapFeatures  = "roadmap_features"
+	agentKeyRoadmapDiscovery  = "roadmap_discovery"
+	agentKeyRoadmapFeatures   = "roadmap_features"
+	agentKeyRoadmapCompetitor = "roadmap_competitor"
 )
 
 // agentKeyForAction returns the canonical agent key for a job action, or "" when
@@ -48,6 +49,12 @@ func agentKeyForAction(action string) string {
 		return agentKeyRoadmapDiscovery
 	case "run-roadmap-features":
 		return agentKeyRoadmapFeatures
+	case "run-roadmap-competitor":
+		return agentKeyRoadmapCompetitor
+	// run-roadmap-publish is deliberately absent: publishing projects already
+	// approved features onto GitHub involves no judgement, so it has no model and
+	// therefore no agent key. Returning one would put a configurable model on the
+	// Agents & Models page for an action that never calls one.
 	default:
 		return ""
 	}
@@ -76,5 +83,6 @@ func agentCatalog() []agentCatalogEntry {
 		{AgentKey: agentKeyIdeation, Label: "Ideation", TierHint: "light"},
 		{AgentKey: agentKeyRoadmapDiscovery, Label: "Roadmap discovery", TierHint: "light"},
 		{AgentKey: agentKeyRoadmapFeatures, Label: "Roadmap features", TierHint: "strong"},
+		{AgentKey: agentKeyRoadmapCompetitor, Label: "Roadmap competitor analysis", TierHint: "light"},
 	}
 }

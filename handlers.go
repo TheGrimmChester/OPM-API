@@ -467,6 +467,12 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 				SpecID       string `json:"specId"`
 				TargetPhase  int    `json:"targetPhase"`
 				IdeationType string `json:"ideationType"`
+				// Competitors and AudienceNotes are the roadmap pipeline's inputs,
+				// carried over from ORA's /api/scm/roadmap/generate request. They are
+				// per-run: which competitors matter is answered differently each time
+				// discovery is re-run.
+				Competitors   []string `json:"competitors,omitempty"`
+				AudienceNotes string   `json:"audienceNotes,omitempty"`
 				// Model is a per-task model override for this job only — the
 				// "plan with the light model, implement with the strong one on
 				// THIS task" case, without editing org configuration.
@@ -496,6 +502,12 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 			}
 			j.TargetPhase = body.TargetPhase
 			j.IdeationType = strings.TrimSpace(body.IdeationType)
+			for _, c := range body.Competitors {
+				if c = strings.TrimSpace(c); c != "" {
+					j.Competitors = append(j.Competitors, c)
+				}
+			}
+			j.AudienceNotes = strings.TrimSpace(body.AudienceNotes)
 			if preferContainerSpawn() {
 				j.Execution = "container"
 				j.Message = "Queued: will docker-run " + runner + " (model when OPM_MODEL_API_KEY set; else fallback + builtin artifacts)."

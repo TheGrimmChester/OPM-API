@@ -39,6 +39,12 @@ type RunnerResult struct {
 	// DiscoveryBlob is the richer discovery object stashed under roadmap.metadata["discovery"].
 	DiscoveryBlob map[string]any `json:"discovery,omitempty"`
 
+	// Competitor is the run-roadmap-competitor artifact, stored under
+	// roadmap.metadata["competitor_analysis"] and read back as an input by
+	// discovery and features. Raw so a field this build does not know about
+	// survives the round trip instead of being dropped.
+	Competitor json.RawMessage `json:"competitor,omitempty"`
+
 	RawExcerpt string `json:"rawExcerpt,omitempty"`
 }
 

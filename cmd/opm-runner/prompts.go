@@ -15,6 +15,8 @@ func promptsFor(in runnerInput) (system, user string) {
 		return discoveryPrompts(in)
 	case "run-roadmap-features":
 		return featuresPrompts(in)
+	case "run-roadmap-competitor":
+		return competitorPrompts(in)
 	case "run-ideation":
 		return ideationPrompts(in)
 	default:
@@ -66,6 +68,48 @@ Ground vision and phases in the real repository purpose (README, manifests, proj
 If existingVision/existingPhases are provided, refine rather than invent unrelated replacements; preserve phase names when still valid.`
 
 	user = baseUserHeader(in)
+	user += appendContextPack(in, true, false)
+	user += appendRepoForDiscovery(in)
+	return system, user
+}
+
+// competitorPrompts is the stage ORA had and OPM did not: a market read that
+// feeds discovery, rather than a stage that writes to the board itself.
+//
+// It names the competitors it was given and says plainly what to do when it was
+// given none, because the alternative — inventing a competitor set — produces
+// confident analysis of products that may not exist.
+func competitorPrompts(in runnerInput) (system, user string) {
+	system = `You are a competitor analysis agent running inside OPM job automation.
+Your subject is the LINKED CUSTOMER REPOSITORY described in the user message (projectName / repository / README / projectIndex).
+Do NOT analyse OPM or the Open family control plane — those are the host, not the product under analysis.
+
+Reply with a single JSON object only (no markdown fences).
+Required JSON keys:
+- competitors (array): [{name, strengths[], weaknesses[], gaps[]}] — one entry per competitor
+- market_gaps (array of strings): unmet needs neither this product nor the competitors address
+- differentiators (array of strings): what this repository does that the competitors do not
+
+Rules:
+- If the user message lists competitors, analyse EXACTLY those. Do not substitute or add others.
+- If it lists none, infer at most three plausible categories of alternative from the repository's
+  domain, and name them as categories ("managed CI services") rather than as specific products you
+  cannot verify. Inventing named competitors is worse than describing a category.
+- Ground strengths and weaknesses in the repository's actual domain, not in generic SaaS platitudes.
+- Leave an array empty rather than filling it with speculation.`
+
+	user = baseUserHeader(in)
+	if len(in.Competitors) > 0 {
+		user += "\ncompetitors to analyse:\n"
+		for _, c := range in.Competitors {
+			user += "- " + c + "\n"
+		}
+	} else {
+		user += "\ncompetitors to analyse: (none named — infer at most three categories of alternative)\n"
+	}
+	if n := strings.TrimSpace(in.AudienceNotes); n != "" {
+		user += "\naudience notes: " + n + "\n"
+	}
 	user += appendContextPack(in, true, false)
 	user += appendRepoForDiscovery(in)
 	return system, user

@@ -27,7 +27,11 @@ func TestAgentKeyForAction(t *testing.T) {
 	}
 	// An action with no AI phase resolves nothing, rather than acquiring a
 	// binding (and a credential) nobody configured for it.
-	for _, action := range []string{"deliver", "skip-to-phase", "", "sync-board"} {
+	// run-roadmap-publish belongs here rather than above: it projects already
+	// approved features onto GitHub, so it involves no judgement and has no model.
+	// An agent key for it would put a model picker on a page for an action that
+	// never calls one.
+	for _, action := range []string{"deliver", "skip-to-phase", "", "sync-board", "run-roadmap-publish"} {
 		if got := agentKeyForAction(action); got != "" {
 			t.Fatalf("agentKeyForAction(%q)=%q want empty", action, got)
 		}
@@ -41,6 +45,7 @@ func TestAgentKeysCoverEveryModelPhase(t *testing.T) {
 	phaseActions := []string{
 		"run-planning", "run-followup-planning", "run-implementation",
 		"run-review", "run-ideation", "run-roadmap-discovery", "run-roadmap-features",
+		"run-roadmap-competitor",
 	}
 	for _, action := range phaseActions {
 		if agentKeyForAction(action) == "" {

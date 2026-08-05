@@ -34,6 +34,11 @@ type runnerInput struct {
 	DefaultBranch string `json:"defaultBranch,omitempty"`
 	ProjectName   string `json:"projectName,omitempty"`
 	IdeationType  string `json:"ideationType,omitempty"`
+	// Competitors and AudienceNotes drive the roadmap pipeline. Named competitors
+	// are analysed exactly as given — see competitorPrompts for why inventing them
+	// is worse than describing a category.
+	Competitors   []string `json:"competitors,omitempty"`
+	AudienceNotes string   `json:"audienceNotes,omitempty"`
 	// ExistingIdeaTitles is a newline-joined list of titles already on the board
 	// so the model proposes net-new ideas instead of duplicates.
 	ExistingIdeaTitles string `json:"existingIdeaTitles,omitempty"`
@@ -85,6 +90,11 @@ type runnerResult struct {
 
 	// Ideas is model-produced ideation keyed by type (run-ideation).
 	Ideas map[string][]ideaOut `json:"ideas,omitempty"`
+
+	// Competitor is the run-roadmap-competitor artifact. Raw rather than typed
+	// because the control plane owns its shape, and a struct here would silently
+	// drop any field the model returned that this build does not know about.
+	Competitor json.RawMessage `json:"competitor,omitempty"`
 
 	Vision         string          `json:"vision,omitempty"`
 	TargetAudience string          `json:"targetAudience,omitempty"`
@@ -412,6 +422,8 @@ func modelForAction(action string) string {
 		return phaseModel("OPM_MODEL_ROADMAP_DISCOVERY")
 	case "run-roadmap-features":
 		return phaseModel("OPM_MODEL_ROADMAP_FEATURES")
+	case "run-roadmap-competitor":
+		return phaseModel("OPM_MODEL_ROADMAP_COMPETITOR")
 	default:
 		return envOr("OPM_MODEL", "auto")
 	}
@@ -472,6 +484,14 @@ func parseModelContent(action, model, content string) runnerResult {
 		res.Mode = "fallback"
 		res.Reason = "model returned non-JSON; control plane will use builtin helpers"
 		return res
+	}
+	// The whole object IS the competitor artifact for that action: the prompt asks
+	// for {competitors, market_gaps, differentiators} at the top level, not nested
+	// under a key.
+	if action == "run-roadmap-competitor" {
+		if _, hasCompetitors := blob["competitors"]; hasCompetitors {
+			res.Competitor = json.RawMessage(content)
+		}
 	}
 	if v, ok := blob["specMarkdown"]; ok {
 		_ = json.Unmarshal(v, &res.SpecMarkdown)
@@ -591,6 +611,14 @@ func parseModelContent(action, model, content string) runnerResult {
 		if len(res.Features) == 0 && strings.TrimSpace(res.Vision) == "" && len(res.Phases) == 0 {
 			res.Mode = "fallback"
 			res.Reason = "model JSON missing features (and no discovery bootstrap)"
+		}
+	case "run-roadmap-competitor":
+		// An empty competitor object is a miss, not a finding: it would otherwise
+		// flow into discovery as though the analysis had concluded there are no
+		// competitors.
+		if len(res.Competitor) == 0 {
+			res.Mode = "fallback"
+			res.Reason = "model JSON missing competitor analysis"
 		}
 	}
 	return res

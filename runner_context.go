@@ -22,6 +22,10 @@ type runnerContext struct {
 	FeaturesDocExcerpt   string            `json:"featuresDocExcerpt,omitempty"`
 	DesignChoicesExcerpt string            `json:"designChoicesExcerpt,omitempty"`
 
+	// Competitor pack — an input to discovery and features, produced by
+	// run-roadmap-competitor.
+	CompetitorAnalysis any `json:"competitorAnalysis,omitempty"`
+
 	// Discovery pack
 	ExistingVision string         `json:"existingVision,omitempty"`
 	ExistingPhases []RoadmapPhase `json:"existingPhases,omitempty"`
@@ -52,7 +56,8 @@ func buildRunnerContext(store *Store, j Job, hostRepo string, repoMounted bool) 
 
 	wantIndex := j.Action == "run-ideation" ||
 		j.Action == "run-roadmap-discovery" ||
-		j.Action == "run-roadmap-features"
+		j.Action == "run-roadmap-features" ||
+		j.Action == "run-roadmap-competitor"
 
 	if hostRepo != "" && wantIndex {
 		idx := populateProjectIndex(hostRepo)
@@ -115,6 +120,12 @@ func cloneHonestyOperatorNote(p Project, workDir string) string {
 }
 
 func fillDiscoveryContext(store *Store, j Job, ctx *runnerContext) {
+	// The competitor analysis is an input here, not decoration: ORA's pipeline fed
+	// it into the discovery prompt, and dropping that would make the competitor
+	// stage write-only.
+	if analysis, ok := competitorAnalysisFor(store, j.ProjectID); ok {
+		ctx.CompetitorAnalysis = analysis
+	}
 	rm, err := store.GetRoadmap(j.ProjectID)
 	if err != nil {
 		return
@@ -126,6 +137,9 @@ func fillDiscoveryContext(store *Store, j Job, ctx *runnerContext) {
 }
 
 func fillFeaturesContext(store *Store, j Job, ctx *runnerContext) {
+	if analysis, ok := competitorAnalysisFor(store, j.ProjectID); ok {
+		ctx.CompetitorAnalysis = analysis
+	}
 	rm, err := store.GetRoadmap(j.ProjectID)
 	if err != nil {
 		ctx.NeedsDiscovery = true
@@ -350,6 +364,14 @@ func writeRunnerInputJSON(store *Store, j Job, path string, repoMounted bool, ho
 	}
 	if j.IdeationType != "" {
 		in["ideationType"] = j.IdeationType
+	}
+	// The roadmap pipeline's per-run inputs. Named competitors are analysed exactly
+	// as given, so they have to reach the prompt rather than being re-derived.
+	if len(j.Competitors) > 0 {
+		in["competitors"] = j.Competitors
+	}
+	if n := strings.TrimSpace(j.AudienceNotes); n != "" {
+		in["audienceNotes"] = n
 	}
 	if j.SpecID != "" {
 		if task, err := store.GetTask(j.ProjectID, j.SpecID); err == nil {

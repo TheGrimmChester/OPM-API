@@ -39,6 +39,12 @@ func applyRunnerResult(store *Store, j Job, rr RunnerResult, taskWorkDir string)
 		}
 		msg, err := applyModelRoadmapDiscovery(store, j, rr)
 		return true, msg, err
+	case "run-roadmap-competitor":
+		if len(rr.Competitor) == 0 {
+			return false, "", nil
+		}
+		msg, err := applyModelRoadmapCompetitor(store, j, rr)
+		return true, msg, err
 	case "run-roadmap-features":
 		if len(rr.Features) == 0 && strings.TrimSpace(rr.Vision) == "" && len(rr.Phases) == 0 {
 			return false, "", nil
@@ -540,14 +546,31 @@ func applyModelRoadmapFeatures(store *Store, j Job, rr RunnerResult) (string, er
 	if added == 0 {
 		return fmt.Sprintf("Roadmap features (model/%s): added 0 (duplicates/implemented=%d).", nz(rr.Model, "model"), skipped), nil
 	}
+	// ORA's schema check, applied here rather than at publish time only. A
+	// validation failure does NOT discard the features: they are real model output,
+	// and throwing them away loses work over a fixable structural problem. It is
+	// recorded on the roadmap and surfaced in the message so the board shows the
+	// caveat, and roadmap publishing refuses until it is resolved.
+	if verr := validateRoadmapJSON(rm); verr != nil {
+		if rm.Metadata == nil {
+			rm.Metadata = map[string]any{}
+		}
+		rm.Metadata["validation_error"] = verr.Error()
+	} else if rm.Metadata != nil {
+		delete(rm.Metadata, "validation_error")
+	}
 	if err := store.PutRoadmap(j.ProjectID, rm); err != nil {
 		return "Failed to write roadmap features", err
 	}
 	_ = store.AppendProjectLog(j.ProjectID, "run-roadmap-features",
 		fmt.Sprintf("[%s] features agent added %d feature(s) (model/%s; skipped=%d)\n",
 			j.RunID, added, nz(rr.Model, "?"), skipped))
-	return fmt.Sprintf("Roadmap features (model/%s): added %d feature(s) across %d phase(s).",
-		nz(rr.Model, "model"), added, len(rm.Phases)), nil
+	msg := fmt.Sprintf("Roadmap features (model/%s): added %d feature(s) across %d phase(s).",
+		nz(rr.Model, "model"), added, len(rm.Phases))
+	if verr := validateRoadmapJSON(rm); verr != nil {
+		msg += " Not publishable yet: " + verr.Error()
+	}
+	return msg, nil
 }
 
 // mergeRoadmapPhases updates/adds phases by matching name (case-insensitive),
@@ -679,4 +702,38 @@ func containsString(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// applyModelRoadmapCompetitor stores a model-produced competitor analysis on the
+// roadmap's metadata.
+//
+// It is metadata rather than a document of its own because the analysis is an
+// input to discovery and features, not something the board renders. Storing it
+// beside the roadmap also means it travels with the roadmap when that is exported.
+func applyModelRoadmapCompetitor(store *Store, j Job, rr RunnerResult) (string, error) {
+	rm, err := store.GetRoadmap(j.ProjectID)
+	if err != nil {
+		// Competitor analysis can legitimately be the first roadmap stage anyone
+		// runs, so a missing document starts one rather than failing.
+		rm = Roadmap{ID: "roadmap-1"}
+	}
+	name := rm.ProjectName
+	if p, perr := store.GetProject(j.ProjectID); perr == nil {
+		name = nz(name, p.Name)
+	}
+	analysis, fromModel := parseCompetitorAnalysis(rr.Competitor, name, j.Competitors)
+	if err := storeCompetitorAnalysis(store, j.ProjectID, rm, analysis); err != nil {
+		return "Failed to store competitor analysis", err
+	}
+	source := "model"
+	if !fromModel {
+		// Say which it was. A heuristic analysis presented as model output is the
+		// kind of thing that gets quoted in a planning meeting.
+		source = "heuristic fallback"
+	}
+	_ = store.AppendProjectLog(j.ProjectID, "run-roadmap-competitor",
+		fmt.Sprintf("[%s] competitor analysis (%s): %d competitor(s), %d market gap(s)\n",
+			j.RunID, source, len(analysis.Competitors), len(analysis.MarketGaps)))
+	return fmt.Sprintf("Stored competitor analysis from %s: %d competitor(s), %d market gap(s), %d differentiator(s)",
+		source, len(analysis.Competitors), len(analysis.MarketGaps), len(analysis.Differentiators)), nil
 }
