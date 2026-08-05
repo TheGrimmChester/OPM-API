@@ -189,3 +189,34 @@ func peerCreatePullRequest(ctx context.Context, orgID, connectorID, ownerRepo, t
 	}
 	return meta, nil
 }
+
+// peerMergePullRequest merges an open delivery pull request through ORA.
+func peerMergePullRequest(ctx context.Context, orgID, connectorID, ownerRepo string, prNumber int) (pullRequestMeta, error) {
+	out, err := peerDeliveryCall(ctx, orgID, "/api/peer/scm/pull-requests/merge", map[string]interface{}{
+		"connector_id":   connectorID,
+		"repo_full_name": ownerRepo,
+		"number":         prNumber,
+	})
+	if err != nil {
+		return pullRequestMeta{}, err
+	}
+	raw, ok := out["pull_request"].(map[string]interface{})
+	if !ok {
+		return pullRequestMeta{}, fmt.Errorf("ora response did not contain a pull_request object")
+	}
+	meta := pullRequestMeta{
+		Number:  intFromAny(raw["number"]),
+		HTMLURL: strFromAny(raw["html_url"]),
+		State:   strFromAny(raw["state"]),
+		Title:   strFromAny(raw["title"]),
+		HeadRef: strFromAny(raw["head_ref"]),
+		BaseRef: strFromAny(raw["base_ref"]),
+	}
+	if meta.Number <= 0 {
+		meta.Number = prNumber
+	}
+	if meta.State == "" {
+		meta.State = "merged"
+	}
+	return meta, nil
+}

@@ -239,7 +239,7 @@ func issueSyncFixture(t *testing.T, ora *stubORA) (*http.ServeMux, *Store, Proje
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := store.CreateTask(p.ID, "Local title", "Local body", false, "", "")
+	task, err := store.CreateTask(p.ID, "Local title", "Local body", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

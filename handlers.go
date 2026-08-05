@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -180,18 +181,31 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 			}
 			writeJSON(w, map[string]interface{}{"tasks": tasks})
 		case http.MethodPost:
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				writeError(w, 400, "invalid body")
+				return
+			}
 			var body struct {
 				Title                     string `json:"title"`
 				Description               string `json:"description"`
 				RequireReviewBeforeCoding bool   `json:"requireReviewBeforeCoding"`
+				HumanReviewRequired       bool   `json:"humanReviewRequired"`
 				IdeationID                string `json:"ideationId"`
 				IdeationTypeKey           string `json:"ideationTypeKey"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			if err := json.Unmarshal(raw, &body); err != nil {
 				writeError(w, 400, "invalid json")
 				return
 			}
-			t, err := store.CreateTask(projectID, body.Title, body.Description, body.RequireReviewBeforeCoding, body.IdeationID, body.IdeationTypeKey)
+			humanReview := true
+			var patch map[string]interface{}
+			if err := json.Unmarshal(raw, &patch); err == nil {
+				if _, ok := patch["humanReviewRequired"]; ok {
+					humanReview = body.HumanReviewRequired
+				}
+			}
+			t, err := store.CreateTask(projectID, body.Title, body.Description, body.RequireReviewBeforeCoding, humanReview, body.IdeationID, body.IdeationTypeKey)
 			if err != nil {
 				writeError(w, 400, err.Error())
 				return

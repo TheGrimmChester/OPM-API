@@ -43,7 +43,12 @@ type Task struct {
 	Title                     string    `json:"title"`
 	Description               string    `json:"description"`
 	Status                    string    `json:"status"`
-	RequireReviewBeforeCoding bool      `json:"requireReviewBeforeCoding"`
+	RequireReviewBeforeCoding bool `json:"requireReviewBeforeCoding"`
+	// HumanReviewRequired gates post-delivery automation. When true (default), the bot
+	// runs review (+ qa-fix if needed) then stops at human_review. When false, the full
+	// pipeline continues through merge and done without a human gate. Omitted/null in
+	// stored JSON is treated as true.
+	HumanReviewRequired *bool `json:"humanReviewRequired"`
 	IdeationID                string    `json:"ideationId,omitempty"`
 	IdeationTypeKey           string    `json:"ideationTypeKey,omitempty"`
 	// GitHub Milestone bind (repo milestones via ORA peer scm:pm).

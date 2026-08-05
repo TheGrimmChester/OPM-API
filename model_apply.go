@@ -10,7 +10,7 @@ import (
 
 // applyRunnerResult persists model output into plan/progress/logs.
 // Returns (handled, message, err). handled=false means caller should run builtin helpers.
-func applyRunnerResult(store *Store, j Job, rr RunnerResult) (bool, string, error) {
+func applyRunnerResult(store *Store, j Job, rr RunnerResult, taskWorkDir string) (bool, string, error) {
 	if rr.Mode != "model" {
 		return false, "", nil
 	}
@@ -19,7 +19,7 @@ func applyRunnerResult(store *Store, j Job, rr RunnerResult) (bool, string, erro
 		msg, err := applyModelPlanning(store, j, rr)
 		return true, msg, err
 	case "run-implementation":
-		msg, err := applyModelImplementation(store, j, rr)
+		msg, err := applyModelImplementation(store, j, rr, taskWorkDir)
 		return true, msg, err
 	case "run-review":
 		msg, err := applyModelReview(store, j, rr)
@@ -129,7 +129,7 @@ func applyModelPlanning(store *Store, j Job, rr RunnerResult) (string, error) {
 	return fmt.Sprintf("Planning complete (model/%s): wrote spec.md + plan; moved to %s.", nz(rr.Model, "model"), toStatus), nil
 }
 
-func applyModelImplementation(store *Store, j Job, rr RunnerResult) (string, error) {
+func applyModelImplementation(store *Store, j Job, rr RunnerResult, taskWorkDir string) (string, error) {
 	msg, err := builtinImplementation(store, j)
 	if err != nil {
 		return msg, err
@@ -153,13 +153,15 @@ func applyModelImplementation(store *Store, j Job, rr RunnerResult) (string, err
 	if !strings.Contains(msg, "model/") {
 		msg = "Model enrichment applied. " + msg
 	}
-	return msg + " " + recordImplementationChangeSet(store, j, rr), nil
+	msg = strings.Replace(msg, "Re-enqueue to continue.", "", 1)
+	msg = strings.Replace(msg, builtinNoCodeNotice, "", 1)
+	return strings.TrimSpace(msg) + " " + recordImplementationChangeSet(store, j, rr, taskWorkDir), nil
 }
 
 // recordImplementationChangeSet persists the runner's file changes so `deliver`
 // can commit them, and returns the operator-facing sentence about what was
 // actually produced. It never claims code was written when it was not.
-func recordImplementationChangeSet(store *Store, j Job, rr RunnerResult) string {
+func recordImplementationChangeSet(store *Store, j Job, rr RunnerResult, taskWorkDir string) string {
 	if j.SpecID == "" {
 		return ""
 	}
@@ -168,17 +170,28 @@ func recordImplementationChangeSet(store *Store, j Job, rr RunnerResult) string 
 		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
 			fmt.Sprintf("[%s] no source changes produced — nothing to deliver (%s)\n",
 				j.RunID, nz(cs.Note, "runner returned no files")))
-		return "No source changes were produced, so there is nothing to deliver yet."
+		return "No source changes were produced this step."
 	}
-	if err := store.PutChangeSet(j.ProjectID, j.SpecID, cs); err != nil {
+	if taskWorkDir != "" && !workspaceIsStub(taskWorkDir) {
+		applied, aerr := applyChangeSet(taskWorkDir, cs, deliveryLimits())
+		if aerr != nil {
+			_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+				fmt.Sprintf("[%s] failed to apply %d file change(s) to session workspace: %v\n", j.RunID, len(cs.Files), aerr))
+			return fmt.Sprintf("Produced %d file change(s) but applying to the session workspace failed: %v.", len(cs.Files), aerr)
+		}
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+			fmt.Sprintf("[%s] applied %d file change(s) to session workspace: %s\n",
+				j.RunID, len(applied.Applied), strings.Join(applied.Applied, ", ")))
+	}
+	if err := store.PutChangeSetMerged(j.ProjectID, j.SpecID, cs); err != nil {
 		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
 			fmt.Sprintf("[%s] failed to record %d file change(s): %v\n", j.RunID, len(cs.Files), err))
 		return fmt.Sprintf("Produced %d file change(s) but recording them failed: %v.", len(cs.Files), err)
 	}
 	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
-		fmt.Sprintf("[%s] recorded %d file change(s) for delivery: %s\n",
+		fmt.Sprintf("[%s] merged %d file change(s) into session change set: %s\n",
 			j.RunID, len(cs.Files), strings.Join(cs.paths(), ", ")))
-	return fmt.Sprintf("Recorded %d file change(s) ready to deliver (POST …/deliver).", len(cs.Files))
+	return fmt.Sprintf("Applied %d file change(s) to the shared implementation workspace.", len(cs.Files))
 }
 
 func applyModelReview(store *Store, j Job, rr RunnerResult) (string, error) {

@@ -214,7 +214,7 @@ func newDeliveryEnv(t *testing.T) *deliveryEnv {
 	if err := store.InitProject(p.ID); err != nil {
 		t.Fatal(err)
 	}
-	task, err := store.CreateTask(p.ID, "Add farewell", "Ship a farewell file", false, "", "")
+	task, err := store.CreateTask(p.ID, "Add farewell", "Ship a farewell file", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

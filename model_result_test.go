@@ -38,7 +38,7 @@ func TestApplyModelPlanningPersists(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.InitProject(p.ID)
-	task, err := store.CreateTask(p.ID, "Model plan me", "desc", false, "", "")
+	task, err := store.CreateTask(p.ID, "Model plan me", "desc", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestApplyModelPlanningPersists(t *testing.T) {
 		},
 		RawExcerpt: `{"specMarkdown":"# Model Spec"}`,
 	}
-	handled, msg, err := applyRunnerResult(store, j, rr)
+	handled, msg, err := applyRunnerResult(store, j, rr, "")
 	if !handled || err != nil {
 		t.Fatalf("handled=%v err=%v msg=%s", handled, err, msg)
 	}
@@ -102,7 +102,7 @@ func TestApplyModelRoadmapDiscoveryAndFeatures(t *testing.T) {
 			},
 		},
 	}
-	handled, msg, err := applyRunnerResult(store, j, rr)
+	handled, msg, err := applyRunnerResult(store, j, rr, "")
 	if !handled || err != nil {
 		t.Fatalf("handled=%v err=%v msg=%s", handled, err, msg)
 	}
@@ -143,7 +143,7 @@ func TestApplyModelRoadmapDiscoveryAndFeatures(t *testing.T) {
 	})
 	_ = store.PutRoadmap(p.ID, rm)
 
-	handled, msg, err = applyRunnerResult(store, fj, frr)
+	handled, msg, err = applyRunnerResult(store, fj, frr, "")
 	if !handled || err != nil {
 		t.Fatalf("features handled=%v err=%v msg=%s", handled, err, msg)
 	}
@@ -178,7 +178,7 @@ func TestApplyModelIdeationSkipsImplemented(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.InitProject(p.ID)
-	task, err := store.CreateTask(p.ID, "Fix auth bypass", "d", false, "idea-1", "security")
+	task, err := store.CreateTask(p.ID, "Fix auth bypass", "d", false, true, "idea-1", "security")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestApplyModelIdeationSkipsImplemented(t *testing.T) {
 			},
 		},
 	}
-	handled, msg, err := applyRunnerResult(store, j, rr)
+	handled, msg, err := applyRunnerResult(store, j, rr, "")
 	if !handled || err != nil {
 		t.Fatalf("handled=%v err=%v msg=%s", handled, err, msg)
 	}

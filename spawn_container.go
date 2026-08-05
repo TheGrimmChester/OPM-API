@@ -64,11 +64,8 @@ func repoMountSource(workDir string) string {
 // (Cursor Agent CLI by default; OpenAI when OPM_MODEL_PROVIDER=openai).
 // (Open-Job-Go ScrubEnv strips API_KEY from -e flags). Output lands in /out/result.json.
 //
-// workDir is the prepared clone of the linked repository. It is mounted read-only
-// at /repo so a task runs against real source: the runner reads the tree and
-// returns file changes, and cannot mutate the workspace the control plane will
-// later commit from. An empty or missing workDir mounts nothing and the runner
-// reports that it had no source to work with.
+// workDir is the prepared clone of the linked repository. For run-implementation it
+// is the task-scoped session repo (read-write). Other actions mount read-only at /repo.
 func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome, error) {
 	var out containerRunOutcome
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -149,7 +146,11 @@ func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome,
 	)
 	args = insertBeforeImage(args, img, "-v", inDir+":/in:ro", "-v", outDir+":/out")
 	if repoMount != "" {
-		args = insertBeforeImage(args, img, "-v", repoMount+":"+containerRepoPath+":ro")
+		mountOpt := ":ro"
+		if j.Action == "run-implementation" {
+			mountOpt = ":rw"
+		}
+		args = insertBeforeImage(args, img, "-v", repoMount+":"+containerRepoPath+mountOpt)
 	}
 
 	wantModel := modelAPIKeyPresent()

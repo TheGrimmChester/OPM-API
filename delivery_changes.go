@@ -127,6 +127,53 @@ func (s *Store) changeSetPath(p Project, specID string) string {
 	return filepath.Join(s.projectDir(p), "specs", specID, changeSetFileName)
 }
 
+// MergeChangeSet merges delta files into base by path (delta wins).
+func MergeChangeSet(base, delta ChangeSet) ChangeSet {
+	byPath := map[string]FileChange{}
+	order := []string{}
+	for _, f := range base.Files {
+		byPath[f.Path] = f
+		order = append(order, f.Path)
+	}
+	for _, f := range delta.Files {
+		if _, ok := byPath[f.Path]; !ok {
+			order = append(order, f.Path)
+		}
+		byPath[f.Path] = f
+	}
+	out := base
+	if delta.RunID != "" {
+		out.RunID = delta.RunID
+	}
+	if delta.Source != "" {
+		out.Source = delta.Source
+	}
+	if delta.Model != "" {
+		out.Model = delta.Model
+	}
+	if strings.TrimSpace(delta.CommitMessage) != "" {
+		out.CommitMessage = delta.CommitMessage
+	}
+	out.RecordedAt = delta.RecordedAt
+	if out.RecordedAt.IsZero() {
+		out.RecordedAt = nowUTC()
+	}
+	out.Files = make([]FileChange, 0, len(order))
+	for _, p := range order {
+		out.Files = append(out.Files, byPath[p])
+	}
+	return out
+}
+
+// PutChangeSetMerged reads existing changes, merges, and writes.
+func (s *Store) PutChangeSetMerged(projectID, specID string, delta ChangeSet) error {
+	base, err := s.GetChangeSet(projectID, specID)
+	if err != nil {
+		return err
+	}
+	return s.PutChangeSet(projectID, specID, MergeChangeSet(base, delta))
+}
+
 // PutChangeSet records the change set produced by a run.
 func (s *Store) PutChangeSet(projectID, specID string, cs ChangeSet) error {
 	if cs.RecordedAt.IsZero() {

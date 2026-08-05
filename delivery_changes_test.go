@@ -262,14 +262,14 @@ func TestRecordImplementationChangeSetDoesNotInventWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.InitProject(p.ID)
-	task, err := store.CreateTask(p.ID, "T", "d", false, "", "")
+	task, err := store.CreateTask(p.ID, "T", "d", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	j := Job{RunID: "run-1", ProjectID: p.ID, SpecID: task.SpecID, Action: "run-implementation"}
 
-	msg := recordImplementationChangeSet(store, j, RunnerResult{Mode: "model", Model: "m"})
-	if !strings.Contains(msg, "nothing to deliver") {
+	msg := recordImplementationChangeSet(store, j, RunnerResult{Mode: "model", Model: "m"}, "")
+	if !strings.Contains(msg, "No source changes were produced") {
 		t.Fatalf("empty output message = %q", msg)
 	}
 	cs, _ := store.GetChangeSet(p.ID, task.SpecID)
@@ -281,7 +281,7 @@ func TestRecordImplementationChangeSetDoesNotInventWork(t *testing.T) {
 	msg = recordImplementationChangeSet(store, j, RunnerResult{
 		Mode: "model", Model: "m", CommitMessage: "Add x",
 		Files: []FileChange{{Path: "x.txt", Contents: &body}},
-	})
+	}, "")
 	if !strings.Contains(msg, "1 file change") {
 		t.Fatalf("recorded message = %q", msg)
 	}
@@ -290,7 +290,7 @@ func TestRecordImplementationChangeSetDoesNotInventWork(t *testing.T) {
 		t.Fatalf("change set = %+v", cs)
 	}
 	logs, _ := store.GetSpecLogs(p.ID, task.SpecID)
-	if !strings.Contains(logs["implementation"], "recorded 1 file change") {
+	if !strings.Contains(logs["implementation"], "merged 1 file change") {
 		t.Fatalf("implementation log = %q", logs["implementation"])
 	}
 }
@@ -417,7 +417,7 @@ func TestRunnerInputAndMountReflectRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.InitProject(p.ID)
-	task, err := store.CreateTask(p.ID, "T", "d", false, "", "")
+	task, err := store.CreateTask(p.ID, "T", "d", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

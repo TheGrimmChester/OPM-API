@@ -70,7 +70,7 @@ func projectSyncFixture(t *testing.T, ora *stubProjectORA) (*http.ServeMux, *Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := store.CreateTask(p.ID, "Local title", "Local body", false, "", "")
+	task, err := store.CreateTask(p.ID, "Local title", "Local body", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +451,7 @@ func TestTaskProjectUnbindClearsItemBinding(t *testing.T) {
 func TestTaskProjectUnbindWhenNotBound(t *testing.T) {
 	ora := newStubProjectORA(t)
 	mux, store, p, _ := projectSyncFixture(t, ora)
-	fresh, err := store.CreateTask(p.ID, "Unbound", "", false, "", "")
+	fresh, err := store.CreateTask(p.ID, "Unbound", "", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

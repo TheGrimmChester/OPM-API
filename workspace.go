@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -21,9 +20,13 @@ func prepareJobWorkspace(p Project, runID string) (string, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
 	}
-	work := filepath.Join(root, "repo")
+	return cloneRepoInto(p, root, "repo")
+}
+
+// cloneRepoInto shallow-clones ownerRepo into root/subdir when credentials exist.
+func cloneRepoInto(p Project, root, subdir string) (string, error) {
+	work := filepath.Join(root, subdir)
 	if !peerORAConfigured() || p.ConnectorID == "" || p.OwnerRepo == "" {
-		// No peer credentials — empty workspace for stub runners.
 		if err := os.MkdirAll(work, 0o755); err != nil {
 			return "", err
 		}
@@ -36,22 +39,20 @@ func prepareJobWorkspace(p Project, runID string) (string, error) {
 	defer cancel()
 	creds, err := peerCloneCredentials(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo)
 	if err != nil {
-		_ = os.RemoveAll(root)
 		return "", fmt.Errorf("clone credentials: %w", err)
 	}
 	token, _ := creds["token"].(string)
 	cloneURL, _ := creds["clone_url"].(string)
 	if token == "" || cloneURL == "" {
-		_ = os.RemoveAll(root)
 		return "", fmt.Errorf("clone credentials incomplete")
 	}
 
 	askPass := filepath.Join(root, "askpass.sh")
 	script := "#!/bin/sh\necho \"$OPA_GIT_ASKPASS_TOKEN\"\n"
 	if err := os.WriteFile(askPass, []byte(script), 0o700); err != nil {
-		_ = os.RemoveAll(root)
 		return "", err
 	}
+	defer func() { _ = os.Remove(askPass) }()
 
 	branch := nz(p.DefaultBranch, "main")
 	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", branch, cloneURL, work)
@@ -64,7 +65,6 @@ func prepareJobWorkspace(p Project, runID string) (string, error) {
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		// Retry without branch pin (default branch may differ).
 		_ = os.RemoveAll(work)
 		cmd = exec.Command("git", "clone", "--depth", "1", cloneURL, work)
 		cmd.Env = append(os.Environ(),
@@ -76,19 +76,14 @@ func prepareJobWorkspace(p Project, runID string) (string, error) {
 		cmd.Dir = root
 		out2, err2 := cmd.CombinedOutput()
 		if err2 != nil {
-			_ = os.RemoveAll(root)
 			return "", fmt.Errorf("git clone: %v (%s / %s)", err2, truncateBytes(out, 200), truncateBytes(out2, 200))
 		}
 	}
-	_ = os.Remove(askPass)
 	return work, nil
 }
 
 func cleanupWorkspace(runID string) {
-	if strings.TrimSpace(runID) == "" {
-		return
-	}
-	_ = os.RemoveAll(filepath.Join(jobTmpRoot(), runID))
+	cleanupRunnerScratch(runID)
 }
 
 func truncateBytes(b []byte, n int) string {

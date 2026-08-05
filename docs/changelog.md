@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Feature: **task-scoped implementation session** — all coding subtasks for a spec share one read-write workspace under `$OPM_JOB_TMP/tasks/{projectId}/{specId}/repo`. Each subtask still runs in a new ephemeral runner container, but file changes persist across steps; the change set merges incrementally. Successful steps auto-chain to the next pending coding subtask (`OPM_IMPL_AUTO_CHAIN`, default on). When coding completes, auto-deliver from the session workspace is optional (`OPM_IMPL_AUTO_DELIVER`, default on). Pause retains the workspace; review releases it and uses a fresh clone.
+
 - Config: all Cursor Agent CLI phase models (`OPM_MODEL` and `OPM_MODEL_*`) default to `auto` when unset — planning, coding, review, ideation, and roadmap jobs all inherit that default for now.
 
 - Feature: **repo-aware ideation and roadmap** — model-backed `run-ideation`, `run-roadmap-discovery`, and `run-roadmap-features` use a default-branch clone plus AutoCursor-near-parity context packs (`projectIndex`, `ideation_context`, discovery/features snapshots, implemented-item filters). The runner returns typed JSON to the control plane (OPM store is source of truth; no `.auto-cursor` writes into the customer repo). Phase model overrides: `OPM_MODEL_IDEATION`, `OPM_MODEL_ROADMAP_DISCOVERY`, `OPM_MODEL_ROADMAP_FEATURES`. Missing-clone honesty note when a connector+repo is linked but no `.git` mount is available. Builtins remain fallback only.

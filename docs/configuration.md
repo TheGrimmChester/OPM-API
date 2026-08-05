@@ -6,7 +6,7 @@
 | `HTTP_ADDR` | — | Fallback if `LISTEN_ADDR` unset |
 | `ORCHESTRATOR_LISTEN_ADDR` | `:8099` | Orchestrator listen address |
 | `OPM_DATA_DIR` | `~/.config/opm` | Linked-project registry + board/task data |
-| `OPM_JOB_TMP` | `/tmp/opm-jobs` (laptop) / host bind on NAS | Ephemeral clone root for job workspaces. On NAS must be the **same absolute host path** inside and outside `opm-api` (e.g. `/mnt/Apps/config-docker/open-stack/opm-jobs`) so `docker run -v` can mount the clone into `opm-runner-task`. |
+| `OPM_JOB_TMP` | `/tmp/opm-jobs` (laptop) / host bind on NAS | Job workspace root. Per-run scratch under `{runId}/`; **task implementation sessions** persist under `tasks/{projectId}/{specId}/repo` until coding completes or review starts. On NAS the path must be the **same absolute host path** inside and outside `opm-api` so `docker run -v` can mount clones into `opm-runner-task`. |
 | `OPM_RUNNER_TAG` | `smoke` (NAS: `nas`) | Tag for `opm-runner-task` image name — prefer `nas` on NAS, never smoke |
 | `OPM_FORCE_BUILTIN` | empty | When `1`/`true`, skip `docker run` and use the in-process artifact writer only |
 | `OPM_INSTANCE` | `default` | Label value for `opm.instance` on runner containers |
@@ -23,6 +23,8 @@
 | `OPM_DELIVERY_BRANCH_PREFIX` | `opm` | Branch namespace for delivered task branches (`<prefix>/<specId>`). Empty means no prefix. |
 | `OPM_DELIVERY_MAX_FILES` | `50` | Maximum files a single delivery may commit. |
 | `OPM_DELIVERY_MAX_BYTES` | `2097152` | Maximum total change-set bytes a single delivery may commit. |
+| `OPM_IMPL_AUTO_CHAIN` | `1` | When truthy, a successful `run-implementation` enqueues the next pending coding subtask automatically (same task workspace). Set `0`/`false` to require manual re-enqueue. |
+| `OPM_IMPL_AUTO_DELIVER` | `1` | When truthy and ORA is linked, finishing the last coding subtask auto-runs delivery (commit/push/PR) from the task workspace, then releases it. Set `0`/`false` to deliver manually. |
 | `OPM_GIT_AUTHOR_NAME` | `opm-api` | Committer name on delivery commits. |
 | `OPM_GIT_AUTHOR_EMAIL` | `opm-api@localhost` | Committer email on delivery commits. |
 | `OPM_RUNNER_NETWORK` | `bridge` | Docker network used when a model key is present (replaces hardened `none` so the runner can reach the model API). |

@@ -13,7 +13,7 @@ import (
 // one ephemeral runner container first, then applies shared artifact helpers.
 // On spawn failure or OPM_FORCE_BUILTIN=1, it falls back to builtin-only execution.
 func executeJob(store *Store, j Job) {
-	defer cleanupWorkspace(j.RunID)
+	defer cleanupRunnerScratch(j.RunID)
 
 	execution := "builtin"
 	fail := func(msg string, err error) {
@@ -42,10 +42,36 @@ func executeJob(store *Store, j Job) {
 	j.StartedAt = &now
 	_ = store.UpdateJob(j.ProjectID, j)
 
-	workDir, err := prepareJobWorkspace(p, j.RunID)
-	if err != nil {
-		fail("Job failed while preparing workspace.", err)
+	var taskSessionDir string
+	var workDir string
+	var werr error
+	autopilot := false
+	if j.SpecID != "" {
+		if task, terr := store.GetTask(j.ProjectID, j.SpecID); terr == nil {
+			autopilot = taskAutopilot(task)
+		}
+	}
+	switch {
+	case usesTaskWorkspace(j.Action, autopilot):
+		if j.SpecID == "" {
+			fail(fmt.Sprintf("%s requires specId", j.Action), fmt.Errorf("specId required"))
+			return
+		}
+		workDir, werr = ensureTaskWorkspace(p, j.SpecID)
+		taskSessionDir = workDir
+	case j.Action == "run-review" && j.SpecID != "" && !autopilot:
+		releaseTaskWorkspace(j.ProjectID, j.SpecID)
+		workDir, werr = prepareJobWorkspace(p, j.RunID)
+	default:
+		workDir, werr = prepareJobWorkspace(p, j.RunID)
+	}
+	if werr != nil {
+		fail("Job failed while preparing workspace.", werr)
 		return
+	}
+	if note := taskWorkspaceHonestyNote(p, j.SpecID, workDir); note != "" && usesTaskWorkspace(j.Action, autopilot) {
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+			fmt.Sprintf("[%s] %s\n", j.RunID, note))
 	}
 
 	cloneNote := ""
@@ -115,7 +141,7 @@ func executeJob(store *Store, j Job) {
 	resultMsg := ""
 	usedModel := false
 	if hasRunnerRR {
-		if handled, msg, aerr := applyRunnerResult(store, j, runnerRR); handled {
+		if handled, msg, aerr := applyRunnerResult(store, j, runnerRR, taskSessionDir); handled {
 			resultMsg, err = msg, aerr
 			usedModel = true
 		} else if runnerRR.Mode == "fallback" && runnerRR.Reason != "" {
@@ -183,6 +209,28 @@ func executeJob(store *Store, j Job) {
 		j.CompletedAt = &done
 		_ = store.UpdateJob(j.ProjectID, j)
 		return
+	}
+	if j.Action == "run-implementation" && j.SpecID != "" {
+		if extra, perr := postImplementationJob(store, j, p, taskSessionDir); perr != nil {
+			resultMsg += fmt.Sprintf(" Post-implementation: %v.", perr)
+		} else if extra != "" {
+			resultMsg += " " + extra
+		}
+	}
+	if j.Action == "run-review" && j.SpecID != "" {
+		passed := lastReviewPassed(store, j)
+		if extra, perr := postReviewJob(store, j, p, passed); perr != nil {
+			resultMsg += fmt.Sprintf(" Post-review: %v.", perr)
+		} else if extra != "" {
+			resultMsg += " " + extra
+		}
+	}
+	if j.Action == "run-qa-fix" && j.SpecID != "" {
+		if extra, perr := postQaFixJob(store, j); perr != nil {
+			resultMsg += fmt.Sprintf(" Post-qa-fix: %v.", perr)
+		} else if extra != "" {
+			resultMsg += " " + extra
+		}
 	}
 	j.State = "completed"
 	j.Execution = execution
@@ -432,9 +480,11 @@ func builtinReview(store *Store, j Job) (string, error) {
 	_ = store.PutProgress(j.ProjectID, j.SpecID, TaskProgress{
 		Progress: pct(done, total), SubtaskCompleted: done, SubtaskTotal: total, RunID: j.RunID, CurrentPhaseName: "Review",
 	})
-	_, _ = store.MoveTask(j.ProjectID, j.SpecID, "human_review")
-	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "validation", fmt.Sprintf("[%s] review PASS → human_review\n", j.RunID))
-	return "Review PASS (builtin): wrote REVIEW.md; moved to human_review.", nil
+	task, _ := store.GetTask(j.ProjectID, j.SpecID)
+	toStatus := reviewPassStatus(task)
+	_, _ = store.MoveTask(j.ProjectID, j.SpecID, toStatus)
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "validation", fmt.Sprintf("[%s] review PASS → %s\n", j.RunID, toStatus))
+	return fmt.Sprintf("Review PASS (builtin): wrote REVIEW.md; moved to %s.", toStatus), nil
 }
 
 func builtinQaFix(store *Store, j Job) (string, error) {

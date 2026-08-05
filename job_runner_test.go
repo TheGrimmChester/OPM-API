@@ -20,7 +20,7 @@ func TestBuiltinPlanningAndImplementation(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.InitProject(p.ID)
-	task, err := store.CreateTask(p.ID, "Ship login", "Add login form", false, "", "")
+	task, err := store.CreateTask(p.ID, "Ship login", "Add login form", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestBuiltinPlanningRequireReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.InitProject(p.ID)
-	task, err := store.CreateTask(p.ID, "Gated", "desc", true, "", "")
+	task, err := store.CreateTask(p.ID, "Gated", "desc", true, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestBuiltinPauseResumeAndRecover(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.InitProject(p.ID)
-	task, err := store.CreateTask(p.ID, "Recover me", "desc", false, "", "")
+	task, err := store.CreateTask(p.ID, "Recover me", "desc", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestBuiltinRoadmapIdeationAndSkip(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.InitProject(p.ID)
-	_, _ = store.CreateTask(p.ID, "Ship login", "Add login form", false, "", "")
+	_, _ = store.CreateTask(p.ID, "Ship login", "Add login form", false, true, "", "")
 
 	dj, err := store.CreateJob(p.ID, "run-roadmap-discovery", "", "opm-runner-task:nas")
 	if err != nil {
@@ -275,7 +275,7 @@ func TestBuiltinRoadmapIdeationAndSkip(t *testing.T) {
 		t.Fatalf("expected security ideas, got %+v", ideas)
 	}
 
-	task, err := store.CreateTask(p.ID, "Skip me", "desc", false, "", "")
+	task, err := store.CreateTask(p.ID, "Skip me", "desc", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -156,7 +156,7 @@ func TestBuildRunnerContextIdeationWritesContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.InitProject(p.ID)
-	task, err := store.CreateTask(p.ID, "Done idea title", "d", false, "idea-done", "security")
+	task, err := store.CreateTask(p.ID, "Done idea title", "d", false, true, "idea-done", "security")
 	if err != nil {
 		t.Fatal(err)
 	}

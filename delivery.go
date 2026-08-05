@@ -311,6 +311,66 @@ func handleTaskDeliver(w http.ResponseWriter, r *http.Request, store *Store, pro
 	writeJSON(w, out)
 }
 
+// runDeliveryFromWorkspace commits paths already applied in workDir (implementation session).
+func runDeliveryFromWorkspace(ctx context.Context, p Project, t Task, workDir string, cs ChangeSet, wantBranch, wantBase string, draft bool) (deliveryResult, string, error) {
+	res := deliveryResult{}
+	if workspaceIsStub(workDir) {
+		return res, deliveryStatusWorkspaceUnavailable,
+			fmt.Errorf("the session workspace is not a git clone")
+	}
+	paths := cs.paths()
+	if len(paths) == 0 {
+		return res, deliveryStatusNoChanges, fmt.Errorf("nothing to deliver: no paths in change set")
+	}
+
+	base := strings.TrimSpace(wantBase)
+	if base == "" {
+		base = nz(p.DefaultBranch, "main")
+	}
+	branch := deliveryBranchName(t.SpecID, wantBranch)
+	if branch == base {
+		return res, deliveryStatusInvalidRequest,
+			fmt.Errorf("the delivery branch would equal the base branch (%s)", base)
+	}
+	res.Branch = branch
+
+	g := newGitRunner(workDir)
+	defer g.close()
+	commit, status, err := gitCommitOnBranch(g, branch, deliverCommitMessage(t, cs), paths)
+	if err != nil {
+		return res, status, err
+	}
+	res.CommitSha = commit.Sha
+	res.Files = commit.Staged
+
+	cred, err := peerPushCredentials(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo)
+	if err != nil {
+		return res, deliveryFaultStatus(err), fmt.Errorf("push credentials: %w", err)
+	}
+	g.withToken(cred.Token)
+	if _, status, err := gitPushBranch(g, cred.CloneURL, branch); err != nil {
+		return res, status, err
+	}
+	g.close()
+
+	title := strings.TrimSpace(t.Title)
+	if title == "" {
+		title = "Deliver " + t.SpecID
+	}
+	pr, err := peerCreatePullRequest(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo,
+		truncateRunes(title, 120), deliverPullRequestBody(t, cs, commit.Staged),
+		branch, base, draft)
+	if err != nil {
+		return res, deliveryFaultStatus(err), fmt.Errorf("opening the pull request: %w", err)
+	}
+	res.PRNumber = pr.Number
+	res.PRURL = pr.HTMLURL
+	res.PRState = pr.State
+	res.AlreadyExisted = pr.AlreadyExisted
+	res.Status = deliveryStatusDelivered
+	return res, "", nil
+}
+
 // runDelivery performs workspace → apply → commit → push → pull request.
 // It returns the partial result alongside the failing status so the caller can
 // persist how far the delivery got.

@@ -38,3 +38,7 @@ func nz(s, d string) string {
 	}
 	return d
 }
+
+func boolPtr(v bool) *bool {
+	return &v
+}

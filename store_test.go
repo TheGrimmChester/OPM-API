@@ -30,7 +30,7 @@ func TestStoreLifecycle(t *testing.T) {
 	if err := store.InitProject(p.ID); err != nil {
 		t.Fatal(err)
 	}
-	task, err := store.CreateTask(p.ID, "First feature", "desc", false, "", "")
+	task, err := store.CreateTask(p.ID, "First feature", "desc", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

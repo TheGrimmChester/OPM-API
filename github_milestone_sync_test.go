@@ -71,7 +71,7 @@ func milestoneFixture(t *testing.T, ora *stubMilestoneORA) (*http.ServeMux, *Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := store.CreateTask(p.ID, "Local title", "Local body", false, "", "")
+	task, err := store.CreateTask(p.ID, "Local title", "Local body", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestMilestoneUnassignWritesSpecLog(t *testing.T) {
 func TestMilestoneUnassignWhenNotBound(t *testing.T) {
 	ora := newStubMilestoneORA(t)
 	mux, store, p, _ := milestoneFixture(t, ora)
-	fresh, err := store.CreateTask(p.ID, "Unbound", "", false, "", "")
+	fresh, err := store.CreateTask(p.ID, "Unbound", "", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestMilestoneUnassignWhenNotBound(t *testing.T) {
 func TestMilestoneUnassignClearsTitleOnlyBind(t *testing.T) {
 	ora := newStubMilestoneORA(t)
 	mux, store, p, _ := milestoneFixture(t, ora)
-	partial, err := store.CreateTask(p.ID, "Half bound", "", false, "", "")
+	partial, err := store.CreateTask(p.ID, "Half bound", "", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func TestMilestoneUnassignFeatureWhenNotBound(t *testing.T) {
 func TestMilestoneAssignThenUnassignRoundTrip(t *testing.T) {
 	ora := newStubMilestoneORA(t)
 	mux, store, p, _ := milestoneFixture(t, ora)
-	fresh, err := store.CreateTask(p.ID, "Round trip", "", false, "", "")
+	fresh, err := store.CreateTask(p.ID, "Round trip", "", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

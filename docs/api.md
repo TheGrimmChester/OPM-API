@@ -247,10 +247,17 @@ Jobs prepare an ephemeral clone (via ORA clone credentials when configured). Whe
 
 Limits that are easy to misread from the action list above:
 
-- **Jobs never modify the cloned repository.** The job clone is discarded after the run;
-  there is no `git add`/`commit`/`push` from the job itself. Delivery is a separate
-  `POST …/deliver` path. `run-implementation` may return `files[]` for delivery;
-  `run-review` judges plan completeness (and optional model review), not a diff.
+- **Implementation uses a shared task workspace, not a throwaway clone per subtask.**
+  Coding jobs mount `$OPM_JOB_TMP/tasks/{projectId}/{specId}/repo` read-write at `/repo`.
+  Each subtask still runs in a **fresh ephemeral runner container**, but all coding steps share
+  the same host volume; model `files[]` output is applied to disk immediately and merged into
+  the task change set. When the last coding subtask succeeds, delivery can run automatically
+  (`OPM_IMPL_AUTO_DELIVER`, default on) and the workspace is released. **Pause** keeps the
+  workspace; auto-chain stops until **resume**. **Review** releases the task workspace and uses
+  a fresh read-only clone in a new container.
+- **Other jobs still use ephemeral clones.** Planning, review, ideation, and roadmap jobs clone
+  under `$OPM_JOB_TMP/{runId}/repo`, mount read-only, and discard scratch after the run.
+  Delivery without a live task workspace still clones under `$OPM_JOB_TMP/deliver-<uuid>/repo`.
 - **`run-roadmap-discovery`, `run-roadmap-features`, and `run-ideation`** prefer model
   apply when the runner returns typed JSON (`mode=model`); builtins remain fallback only.
   Model generators use the default-branch clone + per-action context packs; they do not

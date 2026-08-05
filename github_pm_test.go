@@ -33,7 +33,7 @@ func TestBindGitHubProjectAndTaskFields(t *testing.T) {
 		t.Fatalf("persist: %+v %v", got, err)
 	}
 
-	task, err := store.CreateTask(p.ID, "Ship sync", "desc", false, "", "")
+	task, err := store.CreateTask(p.ID, "Ship sync", "desc", false, true, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

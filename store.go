@@ -444,7 +444,7 @@ func (s *Store) nextSpecID(p Project, title string) (string, error) {
 	return fmt.Sprintf("%03d-%s", maxN+1, slugify(title)), nil
 }
 
-func (s *Store) CreateTask(projectID string, title, description string, requireReview bool, ideationID, ideationType string) (Task, error) {
+func (s *Store) CreateTask(projectID string, title, description string, requireReview, humanReviewRequired bool, ideationID, ideationType string) (Task, error) {
 	var created Task
 	err := s.withProject(projectID, func(p Project) error {
 		title = nz(strings.TrimSpace(title), "Untitled task")
@@ -460,6 +460,7 @@ func (s *Store) CreateTask(projectID string, title, description string, requireR
 			Description:               description,
 			Status:                    "backlog",
 			RequireReviewBeforeCoding: requireReview,
+			HumanReviewRequired:       boolPtr(humanReviewRequired),
 			IdeationID:                ideationID,
 			IdeationTypeKey:           ideationType,
 			CreatedAt:                 now,
@@ -522,6 +523,9 @@ func (s *Store) UpdateTask(projectID, specID string, patch map[string]interface{
 		}
 		if v, ok := patch["requireReviewBeforeCoding"].(bool); ok {
 			t.RequireReviewBeforeCoding = v
+		}
+		if v, ok := patch["humanReviewRequired"].(bool); ok {
+			t.HumanReviewRequired = boolPtr(v)
 		}
 		if v, ok := patch["githubMilestoneNumber"].(float64); ok {
 			t.GithubMilestoneNumber = int(v)
