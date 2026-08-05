@@ -6,17 +6,20 @@
 | `HTTP_ADDR` | — | Fallback if `LISTEN_ADDR` unset |
 | `ORCHESTRATOR_LISTEN_ADDR` | `:8099` | Orchestrator listen address |
 | `OPM_DATA_DIR` | `~/.config/opm` | Linked-project registry + board/task data |
-| `OPM_JOB_TMP` | `/tmp/opm-jobs` | Ephemeral clone root for job workspaces |
+| `OPM_JOB_TMP` | `/tmp/opm-jobs` (laptop) / host bind on NAS | Ephemeral clone root for job workspaces. On NAS must be the **same absolute host path** inside and outside `opm-api` (e.g. `/mnt/Apps/config-docker/open-stack/opm-jobs`) so `docker run -v` can mount the clone into `opm-runner-task`. |
 | `OPM_RUNNER_TAG` | `smoke` (NAS: `nas`) | Tag for `opm-runner-task` image name — prefer `nas` on NAS, never smoke |
 | `OPM_FORCE_BUILTIN` | empty | When `1`/`true`, skip `docker run` and use the in-process artifact writer only |
 | `OPM_INSTANCE` | `default` | Label value for `opm.instance` on runner containers |
 
-| `OPM_MODEL_API_KEY` | empty | API key for OpenAI-compatible chat completions inside `opm-runner-task`. **Required for model-backed plan/build/review.** When unset, the runner emits an honest fallback and the control plane writes builtin artifacts. Never commit this value — set it in compose `.env` only. |
-| `OPM_MODEL_BASE_URL` | `https://api.openai.com/v1` | Base URL for `/chat/completions` (any OpenAI-compatible provider). |
-| `OPM_MODEL` | `gpt-4o-mini` | Default model id for all phases. |
-| `OPM_MODEL_PLANNING` | empty | Optional override for planning jobs. |
-| `OPM_MODEL_CODING` | empty | Optional override for implementation jobs. |
-| `OPM_MODEL_REVIEW` | empty | Optional override for review jobs. |
+| `OPM_MODEL_API_KEY` | empty | API key for Cursor Agent CLI (default) or OpenAI-compatible chat inside `opm-runner-task`. **Required for model-backed plan/build/review/ideation/roadmap.** When unset, the runner emits an honest fallback and the control plane writes builtin artifacts. Never commit this value — set it in compose `.env` only. |
+| `OPM_MODEL_BASE_URL` | `https://api.openai.com/v1` | Base URL for `/chat/completions` when `OPM_MODEL_PROVIDER=openai`. |
+| `OPM_MODEL` | `auto` | Default model id for all phases. Cursor Agent CLI uses `auto` for now. |
+| `OPM_MODEL_PLANNING` | `auto` | Planning jobs (`OPM_MODEL` when unset). |
+| `OPM_MODEL_CODING` | `auto` | Implementation jobs (`OPM_MODEL` when unset). |
+| `OPM_MODEL_REVIEW` | `auto` | Review jobs (`OPM_MODEL` when unset). |
+| `OPM_MODEL_IDEATION` | `auto` | `run-ideation` (`OPM_MODEL` when unset). |
+| `OPM_MODEL_ROADMAP_DISCOVERY` | `auto` | `run-roadmap-discovery` (`OPM_MODEL` when unset). |
+| `OPM_MODEL_ROADMAP_FEATURES` | `auto` | `run-roadmap-features` (`OPM_MODEL` when unset). |
 | `OPM_DELIVERY_BRANCH_PREFIX` | `opm` | Branch namespace for delivered task branches (`<prefix>/<specId>`). Empty means no prefix. |
 | `OPM_DELIVERY_MAX_FILES` | `50` | Maximum files a single delivery may commit. |
 | `OPM_DELIVERY_MAX_BYTES` | `2097152` | Maximum total change-set bytes a single delivery may commit. |

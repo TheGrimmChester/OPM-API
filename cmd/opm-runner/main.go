@@ -1,6 +1,8 @@
 // opm-runner — entrypoint binary for opm-runner-task containers.
-// Invokes an OpenAI-compatible chat completions API when OPM_MODEL_API_KEY is set;
-// otherwise emits an honest fallback result so the control plane can use builtins.
+// Default model path: Cursor Agent CLI (`agent -p --model auto`) when
+// OPM_MODEL_API_KEY or CURSOR_API_KEY is set. Set OPM_MODEL_PROVIDER=openai
+// to use OpenAI-compatible /chat/completions instead. Without a key, emits
+// an honest fallback so the control plane can use builtins.
 package main
 
 import (
@@ -11,6 +13,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -28,9 +31,18 @@ type runnerInput struct {
 	SpecExcerpt   string `json:"specExcerpt,omitempty"`
 	OwnerRepo     string `json:"ownerRepo,omitempty"`
 	DefaultBranch string `json:"defaultBranch,omitempty"`
+	ProjectName   string `json:"projectName,omitempty"`
+	IdeationType  string `json:"ideationType,omitempty"`
+	// ExistingIdeaTitles is a newline-joined list of titles already on the board
+	// so the model proposes net-new ideas instead of duplicates.
+	ExistingIdeaTitles string `json:"existingIdeaTitles,omitempty"`
+	TaskTitles         string `json:"taskTitles,omitempty"`
+	CloneHonestyNote   string `json:"cloneHonestyNote,omitempty"`
 	// RepoDir is where the control plane mounted the prepared clone, read-only.
 	// Empty means no repository was available for this run.
 	RepoDir string `json:"repoDir,omitempty"`
+	// Context is the nested per-action pack from the control plane.
+	Context map[string]any `json:"context,omitempty"`
 }
 
 // fileChange is one source change the runner proposes. Exactly one of contents,
@@ -62,7 +74,29 @@ type runnerResult struct {
 	ReviewMarkdown string `json:"reviewMarkdown,omitempty"`
 	ReviewPass     *bool  `json:"reviewPass,omitempty"`
 
+	// Ideas is model-produced ideation keyed by type (run-ideation).
+	Ideas map[string][]ideaOut `json:"ideas,omitempty"`
+
+	Vision         string          `json:"vision,omitempty"`
+	TargetAudience string          `json:"targetAudience,omitempty"`
+	Phases         json.RawMessage `json:"phases,omitempty"`
+	Features       json.RawMessage `json:"features,omitempty"`
+	Discovery      json.RawMessage `json:"discovery,omitempty"`
+
 	RawExcerpt string `json:"rawExcerpt,omitempty"`
+}
+
+type ideaOut struct {
+	ID                     string   `json:"id,omitempty"`
+	Type                   string   `json:"type,omitempty"`
+	Title                  string   `json:"title"`
+	Description            string   `json:"description,omitempty"`
+	Rationale              string   `json:"rationale,omitempty"`
+	EstimatedEffort        string   `json:"estimated_effort,omitempty"`
+	AffectedFiles          []string `json:"affected_files,omitempty"`
+	ImplementationApproach string   `json:"implementation_approach,omitempty"`
+	Status                 string   `json:"status,omitempty"`
+	CreatedAt              string   `json:"created_at,omitempty"`
 }
 
 type chatReq struct {
@@ -92,21 +126,20 @@ func main() {
 	outDir := envOr("OPM_OUT_DIR", "/out")
 	_ = os.MkdirAll(outDir, 0o755)
 
-	key := strings.TrimSpace(os.Getenv("OPM_MODEL_API_KEY"))
+	key := modelAPIKey()
 	if key == "" {
 		emit(outDir, runnerResult{
 			Mode:   "fallback",
-			Reason: "OPM_MODEL_API_KEY not set; control plane will use builtin artifact helpers",
+			Reason: "OPM_MODEL_API_KEY/CURSOR_API_KEY not set; control plane will use builtin artifact helpers",
 			Action: in.Action,
 		})
 		return
 	}
 
-	base := strings.TrimRight(envOr("OPM_MODEL_BASE_URL", "https://api.openai.com/v1"), "/")
 	model := modelForAction(in.Action)
 	system, user := promptsFor(in)
 
-	content, err := callChat(base, key, model, system, user)
+	content, err := callModel(key, model, system, user)
 	if err != nil {
 		emit(outDir, runnerResult{
 			Mode:   "fallback",
@@ -118,6 +151,73 @@ func main() {
 	}
 
 	emit(outDir, parseModelContent(in.Action, model, content))
+}
+
+func modelAPIKey() string {
+	if k := strings.TrimSpace(os.Getenv("OPM_MODEL_API_KEY")); k != "" {
+		return k
+	}
+	return strings.TrimSpace(os.Getenv("CURSOR_API_KEY"))
+}
+
+func useOpenAIProvider() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("OPM_MODEL_PROVIDER")), "openai")
+}
+
+func callModel(key, model, system, user string) (string, error) {
+	if useOpenAIProvider() {
+		base := strings.TrimRight(envOr("OPM_MODEL_BASE_URL", "https://api.openai.com/v1"), "/")
+		return callChat(base, key, model, system, user)
+	}
+	return callCursorAgent(key, model, system, user)
+}
+
+func callCursorAgent(key, model, system, user string) (string, error) {
+	bin := envOr("OPM_CURSOR_AGENT_BIN", "agent")
+	if _, err := exec.LookPath(bin); err != nil {
+		return "", fmt.Errorf("cursor agent binary %q not found in PATH (rebuild opm-runner-task with agent CLI)", bin)
+	}
+	prompt := system + "\n\n" + user
+	args := []string{
+		"-p", "--trust", "--approve-mcps",
+		"--output-format", "text",
+		"--mode", "ask",
+		"--model", model,
+	}
+	// Prefer workspace = mounted repo when present (parity with agent cwd=/repo).
+	repoDir := strings.TrimSpace(os.Getenv("OPM_REPO_DIR"))
+	if repoDir == "" {
+		if b, err := os.ReadFile(envOr("OPM_IN_FILE", "/in/input.json")); err == nil {
+			var tip struct {
+				RepoDir string `json:"repoDir"`
+			}
+			_ = json.Unmarshal(b, &tip)
+			repoDir = tip.RepoDir
+		}
+	}
+	if repoDir != "" {
+		if st, err := os.Stat(repoDir); err == nil && st.IsDir() {
+			args = append(args, "--workspace", repoDir)
+		}
+	}
+	args = append(args, prompt)
+	cmd := exec.Command(bin, args...)
+	cmd.Env = append(os.Environ(), "CURSOR_API_KEY="+key)
+	if repoDir != "" {
+		if st, err := os.Stat(repoDir); err == nil && st.IsDir() {
+			cmd.Dir = repoDir
+		}
+	}
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	text = strings.ReplaceAll(text, key, "***")
+	if err != nil {
+		return "", fmt.Errorf("cursor agent: %w (%s)", err, truncate(text, 240))
+	}
+	if text == "" {
+		return "", fmt.Errorf("cursor agent returned empty output")
+	}
+	return text, nil
 }
 
 func loadInput() runnerInput {
@@ -164,12 +264,12 @@ func skippedDir(name string) bool {
 func textLikeFile(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".go", ".js", ".jsx", ".ts", ".tsx", ".py", ".rb", ".php", ".rs", ".java",
-		".kt", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".sh", ".sql",
-		".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".css", ".html":
+		".kt", ".kts", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".sh", ".sql",
+		".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".css", ".html", ".xml", ".gradle":
 		return true
 	}
 	switch name {
-	case "Dockerfile", "Makefile", "LICENSE", "README":
+	case "Dockerfile", "Makefile", "LICENSE", "README", "AndroidManifest.xml":
 		return true
 	}
 	return false
@@ -266,82 +366,31 @@ func planFilesToModify(planJSON string) []string {
 	return out
 }
 
+func phaseModel(phaseKey string) string {
+	return envOr(phaseKey, envOr("OPM_MODEL", "auto"))
+}
+
 func modelForAction(action string) string {
 	switch action {
 	case "run-planning", "run-followup-planning":
-		if m := envOr("OPM_MODEL_PLANNING", ""); m != "" {
-			return m
-		}
+		return phaseModel("OPM_MODEL_PLANNING")
 	case "run-implementation":
-		if m := envOr("OPM_MODEL_CODING", ""); m != "" {
-			return m
-		}
+		return phaseModel("OPM_MODEL_CODING")
 	case "run-review":
-		if m := envOr("OPM_MODEL_REVIEW", ""); m != "" {
-			return m
-		}
+		return phaseModel("OPM_MODEL_REVIEW")
+	case "run-ideation":
+		return phaseModel("OPM_MODEL_IDEATION")
+	case "run-roadmap-discovery":
+		return phaseModel("OPM_MODEL_ROADMAP_DISCOVERY")
+	case "run-roadmap-features":
+		return phaseModel("OPM_MODEL_ROADMAP_FEATURES")
+	default:
+		return envOr("OPM_MODEL", "auto")
 	}
-	return envOr("OPM_MODEL", "gpt-4o-mini")
 }
 
-func promptsFor(in runnerInput) (system, user string) {
-	system = `You are the OPM task-automation agent. Reply with a single JSON object only (no markdown fences).
-Keys by action:
-- run-planning / run-followup-planning: specMarkdown (string), plan (object: feature, workflow_type, phases[{phase,name,type,subtasks[{id,description,status,verification,files_to_modify}]}])
-- run-implementation: files (array), commitMessage (string), implementationNotes (string), completedSubtaskId (string, optional)
-- run-review: reviewMarkdown (string), reviewPass (boolean)
+// promptsFor lives in prompts.go (per-action system contracts).
 
-For run-implementation, "files" is the actual source change and the only thing that becomes a commit:
-  [{"path":"relative/path.go","contents":"<complete new file body>"}]
-  [{"path":"relative/path.go","patch":"<unified diff with correct context>"}]
-  [{"path":"relative/path.go","delete":true}]
-Rules for files:
-- paths are repository-relative, forward slashes, never absolute and never containing ".."
-- never touch .git/ or .github/workflows/
-- prefer "contents" for new or small files; use "patch" only when the diff context is exact
-- return an empty files array when you cannot make a correct change — do not invent one
-- commitMessage is a plain subject line, optionally a blank line and a short body
-
-Keep plans concrete and small (3 phases: planning, coding, review). Status values: pending|completed.`
-
-	user = fmt.Sprintf("action=%s\nrunId=%s\nspecId=%s\ntitle=%s\ndescription=%s\n",
-		in.Action, in.RunID, in.SpecID, in.TaskTitle, in.TaskDesc)
-	if in.OwnerRepo != "" {
-		base := strings.TrimSpace(in.DefaultBranch)
-		if base == "" {
-			base = "main"
-		}
-		user += fmt.Sprintf("repository=%s\nbaseBranch=%s\n", in.OwnerRepo, base)
-	}
-	if in.SpecExcerpt != "" {
-		user += "\n--- existing spec ---\n" + truncate(in.SpecExcerpt, 4000) + "\n"
-	}
-	if in.PlanJSON != "" {
-		user += "\n--- existing plan json ---\n" + truncate(in.PlanJSON, 6000) + "\n"
-	}
-
-	if in.RepoDir == "" {
-		user += "\nNo repository was mounted for this run: you cannot see the source. " +
-			"Return an empty files array and say so in implementationNotes.\n"
-		return system, user
-	}
-	inv := repoInventory(in.RepoDir)
-	if len(inv) == 0 {
-		user += "\nThe mounted repository at " + in.RepoDir + " contains no readable source files.\n"
-		return system, user
-	}
-	user += "\n--- repository files (" + fmt.Sprint(len(inv)) + " shown) ---\n" +
-		truncate(strings.Join(inv, "\n"), maxInventoryBytes) + "\n"
-
-	wanted := planFilesToModify(in.PlanJSON)
-	if len(wanted) == 0 {
-		wanted = inv
-	}
-	for rel, body := range repoExcerpts(in.RepoDir, wanted) {
-		user += "\n--- file " + rel + " ---\n" + body + "\n"
-	}
-	return system, user
-}
 
 func callChat(base, key, model, system, user string) (string, error) {
 	body, _ := json.Marshal(chatReq{
@@ -427,6 +476,62 @@ func parseModelContent(action, model, content string) runnerResult {
 	if v, ok := blob["commitMessage"]; ok {
 		_ = json.Unmarshal(v, &res.CommitMessage)
 	}
+	if v, ok := blob["ideas"]; ok {
+		var ideas map[string][]ideaOut
+		if json.Unmarshal(v, &ideas) == nil {
+			res.Ideas = normalizeIdeasKeys(ideas)
+		}
+	}
+	if v, ok := blob["vision"]; ok {
+		_ = json.Unmarshal(v, &res.Vision)
+	}
+	if v, ok := blob["targetAudience"]; ok {
+		_ = json.Unmarshal(v, &res.TargetAudience)
+	}
+	// Accept snake_case aliases from AutoCursor-shaped output.
+	if res.TargetAudience == "" {
+		if v, ok := blob["target_audience"]; ok {
+			var raw json.RawMessage
+			if json.Unmarshal(v, &raw) == nil {
+				var s string
+				if json.Unmarshal(raw, &s) == nil {
+					res.TargetAudience = s
+				} else {
+					res.TargetAudience = compactJSONAudience(raw)
+				}
+			}
+		}
+	}
+	if v, ok := blob["phases"]; ok {
+		res.Phases = v
+	}
+	if v, ok := blob["features"]; ok {
+		res.Features = v
+	}
+	if v, ok := blob["discovery"]; ok {
+		res.Discovery = v
+	}
+	// product_vision.one_liner → vision when vision missing
+	if strings.TrimSpace(res.Vision) == "" {
+		if v, ok := blob["product_vision"]; ok {
+			var pv map[string]any
+			if json.Unmarshal(v, &pv) == nil {
+				if ol, ok := pv["one_liner"].(string); ok {
+					res.Vision = strings.TrimSpace(ol)
+				}
+			}
+		}
+		if strings.TrimSpace(res.Vision) == "" && len(res.Discovery) > 0 {
+			var disc map[string]any
+			if json.Unmarshal(res.Discovery, &disc) == nil {
+				if pv, ok := disc["product_vision"].(map[string]any); ok {
+					if ol, ok := pv["one_liner"].(string); ok {
+						res.Vision = strings.TrimSpace(ol)
+					}
+				}
+			}
+		}
+	}
 	switch action {
 	case "run-planning", "run-followup-planning":
 		if strings.TrimSpace(res.SpecMarkdown) == "" && len(res.Plan) == 0 {
@@ -445,8 +550,63 @@ func parseModelContent(action, model, content string) runnerResult {
 		if len(res.Files) == 0 {
 			res.Reason = "model returned no file changes; nothing to deliver"
 		}
+	case "run-ideation":
+		if len(res.Ideas) == 0 {
+			res.Mode = "fallback"
+			res.Reason = "model JSON missing ideas"
+		}
+	case "run-roadmap-discovery":
+		if strings.TrimSpace(res.Vision) == "" && len(res.Phases) == 0 && len(res.Discovery) == 0 {
+			res.Mode = "fallback"
+			res.Reason = "model JSON missing vision/phases/discovery"
+		}
+	case "run-roadmap-features":
+		if len(res.Features) == 0 && strings.TrimSpace(res.Vision) == "" && len(res.Phases) == 0 {
+			res.Mode = "fallback"
+			res.Reason = "model JSON missing features (and no discovery bootstrap)"
+		}
 	}
 	return res
+}
+
+func normalizeIdeasKeys(ideas map[string][]ideaOut) map[string][]ideaOut {
+	if len(ideas) == 0 {
+		return ideas
+	}
+	aliases := map[string]string{
+		"security_hardening": "security",
+		"code-improvements":  "code_improvements",
+		"code-quality":       "code_quality",
+		"ui-ux":              "ui_ux",
+		"uiux":               "ui_ux",
+	}
+	out := map[string][]ideaOut{}
+	for k, v := range ideas {
+		key := strings.TrimSpace(k)
+		if alt, ok := aliases[key]; ok {
+			key = alt
+		}
+		key = strings.ReplaceAll(key, "-", "_")
+		out[key] = append(out[key], v...)
+	}
+	return out
+}
+
+func compactJSONAudience(raw json.RawMessage) string {
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	parts := []string{}
+	if p, ok := m["primary_persona"].(string); ok && strings.TrimSpace(p) != "" {
+		parts = append(parts, strings.TrimSpace(p))
+	} else if p, ok := m["primary"].(string); ok && strings.TrimSpace(p) != "" {
+		parts = append(parts, strings.TrimSpace(p))
+	}
+	if u, ok := m["usage_context"].(string); ok && strings.TrimSpace(u) != "" {
+		parts = append(parts, strings.TrimSpace(u))
+	}
+	return strings.Join(parts, " — ")
 }
 
 // sanitizeFileChanges drops entries the control plane would refuse anyway, so the

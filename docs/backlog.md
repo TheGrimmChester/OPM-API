@@ -14,7 +14,7 @@ and capability routes need an operator token), so nothing here is claimed as ver
 - Board task create / move / edit / delete; **drag-and-drop**; task action menu; require-review; approve-for-coding
 - Task detail drawer: plan / progress / spec / logs + run actions (incl. pause/resume/recover)
 - Ideation create/edit/delete + promote; roadmap phase/feature create/edit/delete
-- **Roadmap / ideation agents**: `run-roadmap-discovery`, `run-roadmap-features`, `run-ideation` write real roadmap/ideation artifacts (builtin; container spawn then helpers)
+- **Roadmap / ideation agents**: `run-roadmap-discovery`, `run-roadmap-features`, `run-ideation` prefer model apply with repo-aware context packs (`projectIndex`, ideation/discovery/features); builtins remain fallback
 - **Skip-to-phase**: `skip-to-phase` with `targetPhase` completes earlier plan subtasks and jumps the pipeline
 - **Containerized job spawn**: `opm-api` + `opm-orchestrator` ship docker CLI; compose mounts `docker.sock`; jobs `docker run` `opm-runner-task:nas` when `spawnReady` (builtin fallback)
 - Shared artifact helpers write plan/spec/progress/review/changelog after spawn (or builtin-only when forced)
@@ -31,9 +31,9 @@ and capability routes need an operator token), so nothing here is claimed as ver
 | Area | Gap | Notes |
 |------|-----|-------|
 | Delivery | Code delivery | **Shipped**: the job clone is mounted read-only at `/repo`; `POST …/tasks/{specId}/deliver` applies the runner's change set, commits on a task branch, pushes via ORA `scm:pr`, and opens a pull request. `run-review` still judges plan completeness rather than the diff |
-| Jobs | Model-backed agents in runner | **Shipped for planning/implementation/review**: OpenAI-compatible API when `OPM_MODEL_API_KEY` set; fallback + builtin otherwise |
+| Jobs | Model-backed agents in runner | **Shipped** for planning/implementation/review/ideation/roadmap when `OPM_MODEL_API_KEY` set (Cursor agent by default); fallback + builtin otherwise |
 | Jobs | Higher-quality planning/impl | Model output persisted when key present; builtin heuristics remain fallback |
-| Roadmap / ideation | Generation | **Shipped (builtin)**: discovery/features/ideation write real artifacts; model-backed path for these still follow-on |
+| Roadmap / ideation | Generation | **Shipped (model + builtin fallback)**: repo-aware context packs, projectIndex, implemented filters; OPM store is source of truth |
 | Pipeline | Skip-to-phase | **Shipped**: `skip-to-phase` + `targetPhase` |
 | Orchestrator | Dispatch + reaping | Health + spawn-probe only (scheduler stub); spawn in-process in `opm-api` |
 | Peer | Projects v2 draft title refresh | **Shipped**: renames reach the board and every outcome is reported. Blocked in practice until the App installation is granted organization projects write — reported as `missing_organization_projects`, not silently skipped |

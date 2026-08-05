@@ -424,7 +424,7 @@ func TestRunnerInputAndMountReflectRepo(t *testing.T) {
 	j := Job{RunID: "run-1", ProjectID: p.ID, SpecID: task.SpecID, Action: "run-implementation"}
 
 	path := filepath.Join(t.TempDir(), "input.json")
-	if err := writeRunnerInput(store, j, path, true); err != nil {
+	if err := writeRunnerInputJSON(store, j, path, true, ""); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(path)
@@ -437,11 +437,11 @@ func TestRunnerInputAndMountReflectRepo(t *testing.T) {
 			t.Fatalf("runner input missing %s: %s", want, body)
 		}
 	}
-	if err := writeRunnerInput(store, j, path, false); err != nil {
+	if err := writeRunnerInputJSON(store, j, path, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	b2, _ := os.ReadFile(path)
-	if strings.Contains(string(b2), "repoDir") {
+	if strings.Contains(string(b2), `"repoDir"`) {
 		t.Fatalf("no repo means no repoDir: %s", b2)
 	}
 

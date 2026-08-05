@@ -28,6 +28,17 @@ type RunnerResult struct {
 	ReviewMarkdown string `json:"reviewMarkdown,omitempty"`
 	ReviewPass     *bool  `json:"reviewPass,omitempty"`
 
+	// Ideas is model-produced ideation keyed by type (run-ideation).
+	Ideas Ideation `json:"ideas,omitempty"`
+
+	// Roadmap discovery / features (returned as JSON to the control plane).
+	Vision         string           `json:"vision,omitempty"`
+	TargetAudience string           `json:"targetAudience,omitempty"`
+	Phases         []RoadmapPhase   `json:"phases,omitempty"`
+	Features       []RoadmapFeature `json:"features,omitempty"`
+	// DiscoveryBlob is the richer discovery object stashed under roadmap.metadata["discovery"].
+	DiscoveryBlob map[string]any `json:"discovery,omitempty"`
+
 	RawExcerpt string `json:"rawExcerpt,omitempty"`
 }
 
@@ -58,34 +69,43 @@ func parseRunnerResultJSON(raw []byte) (RunnerResult, bool) {
 }
 
 func modelAPIKeyPresent() bool {
-	return strings.TrimSpace(envOr("OPM_MODEL_API_KEY", "")) != ""
+	return strings.TrimSpace(envOr("OPM_MODEL_API_KEY", "")) != "" ||
+		strings.TrimSpace(envOr("CURSOR_API_KEY", "")) != ""
 }
 
 func modelBaseURL() string {
 	return strings.TrimRight(envOr("OPM_MODEL_BASE_URL", "https://api.openai.com/v1"), "/")
 }
 
+func phaseModel(phaseKey string) string {
+	return envOr(phaseKey, envOr("OPM_MODEL", "auto"))
+}
+
 func modelForAction(action string) string {
 	switch action {
 	case "run-planning", "run-followup-planning":
-		if m := envOr("OPM_MODEL_PLANNING", ""); m != "" {
-			return m
-		}
+		return phaseModel("OPM_MODEL_PLANNING")
 	case "run-implementation":
-		if m := envOr("OPM_MODEL_CODING", ""); m != "" {
-			return m
-		}
+		return phaseModel("OPM_MODEL_CODING")
 	case "run-review":
-		if m := envOr("OPM_MODEL_REVIEW", ""); m != "" {
-			return m
-		}
+		return phaseModel("OPM_MODEL_REVIEW")
+	case "run-ideation":
+		return phaseModel("OPM_MODEL_IDEATION")
+	case "run-roadmap-discovery":
+		return phaseModel("OPM_MODEL_ROADMAP_DISCOVERY")
+	case "run-roadmap-features":
+		return phaseModel("OPM_MODEL_ROADMAP_FEATURES")
+	default:
+		return envOr("OPM_MODEL", "auto")
 	}
-	return envOr("OPM_MODEL", "gpt-4o-mini")
 }
 
 func modelConfigHonesty() string {
 	if !modelAPIKeyPresent() {
-		return "OPM_MODEL_API_KEY unset — runner reports fallback; control plane uses builtin artifact helpers."
+		return "OPM_MODEL_API_KEY/CURSOR_API_KEY unset — runner reports fallback; control plane uses builtin artifact helpers."
 	}
-	return "OPM_MODEL_API_KEY set; runner will call " + modelBaseURL() + "/chat/completions (OpenAI-compatible). Set OPM_MODEL / OPM_MODEL_PLANNING|CODING|REVIEW as needed."
+	if strings.EqualFold(strings.TrimSpace(envOr("OPM_MODEL_PROVIDER", "")), "openai") {
+		return "model key set; runner will call " + modelBaseURL() + "/chat/completions (OpenAI-compatible). Default model is auto unless OPM_MODEL* overrides."
+	}
+	return "model key set; runner will invoke Cursor agent CLI (default --model auto). Set OPM_MODEL_PROVIDER=openai for OpenAI-compatible chat completions."
 }

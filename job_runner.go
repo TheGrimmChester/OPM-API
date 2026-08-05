@@ -48,12 +48,22 @@ func executeJob(store *Store, j Job) {
 		return
 	}
 
+	cloneNote := ""
+	if j.Action == "run-ideation" || j.Action == "run-roadmap-discovery" || j.Action == "run-roadmap-features" {
+		cloneNote = cloneHonestyOperatorNote(p, workDir)
+	}
+
 	j, err = store.GetJob(j.ProjectID, j.RunID)
 	if err != nil || j.State == "cancelled" {
 		return
 	}
 
 	spawnNote := ""
+	if cloneNote != "" {
+		spawnNote = cloneNote + " "
+		_ = store.AppendProjectLog(j.ProjectID, j.Action,
+			fmt.Sprintf("[%s] clone honesty: %s\n", j.RunID, cloneNote))
+	}
 	var runnerRR RunnerResult
 	var hasRunnerRR bool
 	if preferContainerSpawn() {

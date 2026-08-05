@@ -239,16 +239,21 @@ Job actions include: `run-planning`, `run-implementation`, `run-review`, `run-qa
 - `skip-to-phase` requires `specId` and 1-based `targetPhase` (plan phase number).
 - `run-ideation` may set `ideationType` to one of the ideation type keys; omit to fill all types.
 
-Jobs prepare an ephemeral clone (via ORA clone credentials when configured). When `/api/spawn-probe` reports `spawnReady: true` (docker CLI + daemon + `opm-runner-task:nas`), the job **docker-runs** one hardened ephemeral runner (`execution: "container"`), which invokes an OpenAI-compatible model when `OPM_MODEL_API_KEY` is set and writes `/out/result.json`. The control plane persists model output into `spec.md` / plan / progress / review / logs / roadmap / ideation. Without a key (or on model failure), the runner reports `mode=fallback` and shared builtin helpers still write artifacts. On spawn failure or `OPM_FORCE_BUILTIN=1`, jobs fall back to builtin-only (`execution: "builtin"`). Orchestrator `/api/spawn-probe` includes `modelConfigured` / `modelHonesty`.
+Jobs prepare an ephemeral clone (via ORA clone credentials when configured). When `/api/spawn-probe` reports `spawnReady: true` (docker CLI + daemon + `opm-runner-task:nas`), the job **docker-runs** one hardened ephemeral runner (`execution: "container"`), which invokes Cursor Agent CLI by default when `OPM_MODEL_API_KEY` / `CURSOR_API_KEY` is set (or OpenAI-compatible chat when `OPM_MODEL_PROVIDER=openai`) and writes `/out/result.json`. The control plane persists model output into `spec.md` / plan / progress / review / logs / roadmap / ideation. Without a key (or on model failure), the runner reports `mode=fallback` and shared builtin helpers still write artifacts. On spawn failure or `OPM_FORCE_BUILTIN=1`, jobs fall back to builtin-only (`execution: "builtin"`). Orchestrator `/api/spawn-probe` includes `modelConfigured` / `modelHonesty`.
+
+**Repo-aware ideation / roadmap:** for `run-ideation`, `run-roadmap-discovery`, and `run-roadmap-features`, the control plane builds a `projectIndex` from the mounted default-branch clone, writes a nested `context` pack into runner `input.json` (discovery vs features vs ideation — including `ideation_context`, implemented Done-board idea filters, and implemented feature exclusions), and applies model JSON (`vision`/`phases`/`features`/`ideas`) into the OPM store. Phase model env keys: `OPM_MODEL_IDEATION`, `OPM_MODEL_ROADMAP_DISCOVERY`, `OPM_MODEL_ROADMAP_FEATURES` (fallback `OPM_MODEL` → `auto`). When a linked repo+connector exists but no usable `.git` clone is mounted, the input includes an honesty note so the agent does not invent file paths.
 
 ### What jobs do and do not do
 
 Limits that are easy to misread from the action list above:
 
-- **Jobs never modify the cloned repository.** The job clone is discarded after the run (`_ = workDir`);
-  there is no `git add`/`commit`/`push`, branch creation, or pull-request call. `run-implementation` advances
-  the **plan**; `run-review` judges plan completeness, not a diff.
-- **`run-roadmap-discovery`, `run-roadmap-features`, and `run-ideation`** write vision/phases/features/ideas
-  via builtin helpers (after optional container spawn). Model apply still covers planning/implementation/review only.
+- **Jobs never modify the cloned repository.** The job clone is discarded after the run;
+  there is no `git add`/`commit`/`push` from the job itself. Delivery is a separate
+  `POST …/deliver` path. `run-implementation` may return `files[]` for delivery;
+  `run-review` judges plan completeness (and optional model review), not a diff.
+- **`run-roadmap-discovery`, `run-roadmap-features`, and `run-ideation`** prefer model
+  apply when the runner returns typed JSON (`mode=model`); builtins remain fallback only.
+  Model generators use the default-branch clone + per-action context packs; they do not
+  write agent state into the customer repository.
 - **`skip-to-phase`** requires `specId` and 1-based `targetPhase`; it marks earlier plan subtasks complete and advances progress.
 

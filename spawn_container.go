@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -61,7 +60,8 @@ func repoMountSource(workDir string) string {
 }
 
 // runTaskContainer starts one hardened ephemeral opm-runner-task container.
-// When OPM_MODEL_API_KEY is set, enables network + passes model env via --env-file
+// When OPM_MODEL_API_KEY or CURSOR_API_KEY is set, enables network + passes model env via --env-file
+// (Cursor Agent CLI by default; OpenAI when OPM_MODEL_PROVIDER=openai).
 // (Open-Job-Go ScrubEnv strips API_KEY from -e flags). Output lands in /out/result.json.
 //
 // workDir is the prepared clone of the linked repository. It is mounted read-only
@@ -83,7 +83,18 @@ func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome,
 	outDir := filepath.Join(jobTmpRoot(), j.RunID, "runner-out")
 	_ = os.MkdirAll(inDir, 0o755)
 	_ = os.MkdirAll(outDir, 0o755)
-	if err := writeRunnerInput(store, j, filepath.Join(inDir, "input.json"), repoMountSource(workDir) != ""); err != nil {
+
+	repoMount := repoMountSource(workDir)
+	repoMounted := repoMount != ""
+	if repoMounted {
+		wantIndex := j.Action == "run-ideation" ||
+			j.Action == "run-roadmap-discovery" ||
+			j.Action == "run-roadmap-features"
+		if wantIndex {
+			_, _ = ensureProjectIndex(repoMount, filepath.Join(inDir, "project_index.json"))
+		}
+	}
+	if err := writeRunnerInputJSON(store, j, filepath.Join(inDir, "input.json"), repoMounted, repoMount); err != nil {
 		return out, err
 	}
 
@@ -95,24 +106,21 @@ func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome,
 		"OPM_IN_FILE": "/in/input.json",
 		"OPM_OUT_DIR": "/out",
 	}
-	repoMount := repoMountSource(workDir)
-	if repoMount != "" {
+	if repoMounted {
 		env["OPM_REPO_DIR"] = containerRepoPath
 	}
 	if v := envOr("OPM_MODEL_BASE_URL", ""); v != "" {
 		env["OPM_MODEL_BASE_URL"] = v
 	}
-	if v := envOr("OPM_MODEL", ""); v != "" {
-		env["OPM_MODEL"] = v
+	env["OPM_MODEL"] = envOr("OPM_MODEL", "auto")
+	for _, k := range []string{
+		"OPM_MODEL_PLANNING", "OPM_MODEL_CODING", "OPM_MODEL_REVIEW",
+		"OPM_MODEL_IDEATION", "OPM_MODEL_ROADMAP_DISCOVERY", "OPM_MODEL_ROADMAP_FEATURES",
+	} {
+		env[k] = phaseModel(k)
 	}
-	if v := envOr("OPM_MODEL_PLANNING", ""); v != "" {
-		env["OPM_MODEL_PLANNING"] = v
-	}
-	if v := envOr("OPM_MODEL_CODING", ""); v != "" {
-		env["OPM_MODEL_CODING"] = v
-	}
-	if v := envOr("OPM_MODEL_REVIEW", ""); v != "" {
-		env["OPM_MODEL_REVIEW"] = v
+	if v := envOr("OPM_MODEL_PROVIDER", ""); v != "" {
+		env["OPM_MODEL_PROVIDER"] = v
 	}
 	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
@@ -134,6 +142,11 @@ func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome,
 	args = append(args, "run", "--name", name)
 	args = append(args, base[1:]...)
 
+	// Cursor agent needs writable HOME + /tmp under --read-only (same as ORA job argv).
+	args = insertBeforeImage(args, img,
+		"--tmpfs", "/tmp:rw,exec,nosuid,nodev,uid=65532,gid=65532,mode=1777,size=1g",
+		"--tmpfs", "/home/opm:rw,exec,nosuid,nodev,uid=65532,gid=65532,mode=1777,size=256m",
+	)
 	args = insertBeforeImage(args, img, "-v", inDir+":/in:ro", "-v", outDir+":/out")
 	if repoMount != "" {
 		args = insertBeforeImage(args, img, "-v", repoMount+":"+containerRepoPath+":ro")
@@ -154,7 +167,7 @@ func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome,
 
 	timeout := 2 * time.Minute
 	if wantModel {
-		timeout = 3 * time.Minute
+		timeout = 12 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -176,41 +189,6 @@ func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome,
 	return out, nil
 }
 
-func writeRunnerInput(store *Store, j Job, path string, repoMounted bool) error {
-	in := map[string]string{
-		"action":    j.Action,
-		"runId":     j.RunID,
-		"specId":    j.SpecID,
-		"projectId": j.ProjectID,
-	}
-	if repoMounted {
-		in["repoDir"] = containerRepoPath
-	}
-	if p, err := store.GetProject(j.ProjectID); err == nil {
-		in["ownerRepo"] = p.OwnerRepo
-		in["defaultBranch"] = nz(p.DefaultBranch, "main")
-	}
-	if j.SpecID != "" {
-		if task, err := store.GetTask(j.ProjectID, j.SpecID); err == nil {
-			in["taskTitle"] = task.Title
-			in["taskDescription"] = task.Description
-		}
-		if md, err := store.GetSpecMarkdown(j.ProjectID, j.SpecID); err == nil {
-			in["specExcerpt"] = truncateRunes(md, 4000)
-		}
-		if plan, err := store.GetPlan(j.ProjectID, j.SpecID); err == nil && len(plan.Phases) > 0 {
-			if b, mErr := json.Marshal(plan); mErr == nil {
-				in["planJson"] = string(b)
-			}
-		}
-	}
-	b, err := json.MarshalIndent(in, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0o644)
-}
-
 func writeModelEnvFile() (path string, cleanup func(), err error) {
 	f, err := os.CreateTemp("", "opm-model-env-*")
 	if err != nil {
@@ -219,14 +197,28 @@ func writeModelEnvFile() (path string, cleanup func(), err error) {
 	path = f.Name()
 	cleanup = func() { _ = os.Remove(path) }
 	key := strings.TrimSpace(os.Getenv("OPM_MODEL_API_KEY"))
-	lines := []string{"OPM_MODEL_API_KEY=" + key}
+	if key == "" {
+		key = strings.TrimSpace(os.Getenv("CURSOR_API_KEY"))
+	}
+	lines := []string{
+		"OPM_MODEL_API_KEY=" + key,
+		"CURSOR_API_KEY=" + key,
+		"OPM_MODEL=" + envOr("OPM_MODEL", "auto"),
+	}
 	if v := envOr("OPM_MODEL_BASE_URL", ""); v != "" {
 		lines = append(lines, "OPM_MODEL_BASE_URL="+v)
 	}
-	for _, k := range []string{"OPM_MODEL", "OPM_MODEL_PLANNING", "OPM_MODEL_CODING", "OPM_MODEL_REVIEW"} {
-		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
-			lines = append(lines, k+"="+v)
-		}
+	if v := envOr("OPM_MODEL_PROVIDER", ""); v != "" {
+		lines = append(lines, "OPM_MODEL_PROVIDER="+v)
+	}
+	if v := envOr("OPM_CURSOR_AGENT_BIN", ""); v != "" {
+		lines = append(lines, "OPM_CURSOR_AGENT_BIN="+v)
+	}
+	for _, k := range []string{
+		"OPM_MODEL_PLANNING", "OPM_MODEL_CODING", "OPM_MODEL_REVIEW",
+		"OPM_MODEL_IDEATION", "OPM_MODEL_ROADMAP_DISCOVERY", "OPM_MODEL_ROADMAP_FEATURES",
+	} {
+		lines = append(lines, k+"="+phaseModel(k))
 	}
 	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
 		_ = f.Close()
