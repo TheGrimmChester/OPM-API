@@ -36,12 +36,41 @@ Credentials stay in **ORA**. OPM calls peer `scm:pm` endpoints; the dashboard us
 
 - `GET /api/projects/{id}/github/milestones` → `{ milestones: [{ number, title, description, state, html_url }] }`
 - `POST /api/projects/{id}/github/milestones/assign` `{ specId?|featureId?|phaseId?, milestoneNumber?, title?, description?, state?, createIfMissing? }` → bind + optional upsert on GitHub
+- `POST /api/projects/{id}/github/milestones/unassign` `{ specId?|featureId?|phaseId? }` → clears the milestone bind; the GitHub milestone is left untouched (see below)
 - `GET /api/projects/{id}/github/projects` → `{ projects: [{ id, title, url, number }], boundProjectId, … }` (Projects v2 GraphQL)
 - `POST /api/projects/{id}/github/projects/bind` `{ projectId, projectTitle?, projectUrl? }` → bind OPM project to a GitHub Project. A blank `projectId` is rejected — use `unbind`
 - `POST /api/projects/{id}/github/projects/unbind` → clears the project-level bind; the GitHub Project and its items are left untouched
 - `POST /api/projects/{id}/github/projects/items/unbind` `{ specId }` → clears one task's board-item bind; the board item is left untouched
 - `POST /api/projects/{id}/github/projects/sync-item` `{ specId?|featureId?, title?, body?, status? }` → create/update draft Project item; maps OPM column → Status option best-effort
 - `POST /api/projects/{id}/github/sync-task/{specId}` → push task title/description/status to bound Project item + optional milestone state
+
+### Milestone bind ↔ unassign
+
+`assign` is the forward direction; `unassign` is its explicit inverse and is **OPM-side only** — the GitHub
+milestone is neither closed nor deleted, exactly like `issues/unlink` leaves the issue open and
+`projects/unbind` leaves the board item on the board.
+
+Send at least one of `specId`, `featureId`, `phaseId`; several may be unassigned in one call. Success answers
+`200` with `status: "ok"`, a `cleared` array (`[{ target: "task"|"feature"|"phase", id, milestoneNumber,
+milestoneTitle }]`), `unassignedMilestoneNumber` / `unassignedMilestoneTitle` mirroring `cleared[0]`, a `note`
+saying GitHub was left alone, and the updated `task` and/or `roadmap`. When a task is unassigned the same is
+appended to the spec log `github-milestone-sync`.
+
+| `status` | HTTP | Meaning |
+|----------|------|---------|
+| `ok` | 200 | The bind was cleared. `cleared` lists every target. |
+| `invalid_request` | 400 | Malformed JSON, or none of `specId` / `featureId` / `phaseId` was sent. |
+| `not_bound` | 400 | No requested target carried a milestone bind, so there was nothing to clear. |
+| `task_not_found` | 404 | `specId` does not resolve in this project. |
+| `feature_not_found` / `phase_not_found` | 404 | The id is absent from the roadmap. Nothing is written — a bad `phaseId` cannot leave the feature half-unassigned. |
+| `roadmap_unreadable` | 500 | `roadmap.json` could not be parsed. |
+
+A bind counts as present when *any* of number, title or url is set, so a half-written bind can be cleaned up
+rather than being reported as `not_bound`. `unassign` makes no peer call at all, but it shares the `…/github/…`
+precondition and so still answers `503` when `PEER_ORA_URL` is unset — the same as `projects/unbind`.
+
+Patching `githubMilestoneNumber` to `0` via `PATCH …/tasks/{specId}` still clears the three task fields, but it
+is silent, writes no spec-log entry, and cannot touch a roadmap feature or phase. Prefer `unassign`.
 
 ### Task ↔ board item sync
 
@@ -79,9 +108,9 @@ Push sends task title, description and the state implied by the board column (`d
 
 Failures carry `status` (`missing_issues_permission` 403, `issue_not_found` 404, `no_issue_linked` / `not_linked_repo` 400, `upstream_error` 502), are persisted on the task as `githubIssueSyncError`, and are appended to the spec log `github-issue-sync`. Full mapping and permission tables: [github-setup.md](github-setup.md).
 
-Task fields: `githubMilestoneNumber`, `githubMilestoneTitle`, `githubMilestoneUrl`, `githubProjectId`, `githubProjectItemId`, `githubProjectSyncedAt`, `githubProjectSyncError` (also via `PATCH …/tasks/{specId}`); issue link `githubIssueNumber`, `githubIssueUrl`, `githubIssueState`, `githubIssueTitle`, `githubIssueAssignee`, `githubIssueLabels`, `githubIssueSyncedAt`, `githubIssueSyncError`. Patching `githubIssueNumber` to `0` clears the link.
+Task fields: `githubMilestoneNumber`, `githubMilestoneTitle`, `githubMilestoneUrl`, `githubProjectId`, `githubProjectItemId`, `githubProjectSyncedAt`, `githubProjectSyncError` (also via `PATCH …/tasks/{specId}`); issue link `githubIssueNumber`, `githubIssueUrl`, `githubIssueState`, `githubIssueTitle`, `githubIssueAssignee`, `githubIssueLabels`, `githubIssueSyncedAt`, `githubIssueSyncError`. Patching `githubIssueNumber` to `0` clears the link; patching `githubMilestoneNumber` to `0` clears the milestone fields, though `milestones/unassign` is the documented inverse.
 
-Roadmap phase/feature fields: `github_milestone_number`, `github_milestone_title`, `github_milestone_url`; features also `github_project_id`, `github_project_item_id`.
+Roadmap phase/feature fields: `github_milestone_number`, `github_milestone_title`, `github_milestone_url`; features also `github_project_id`, `github_project_item_id`. The milestone bind on a feature or phase is cleared only by `milestones/unassign`.
 
 **Required GitHub App / token scopes (ORA connector):**
 
