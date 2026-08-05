@@ -282,10 +282,18 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 			writeError(w, 400, err.Error())
 			return
 		}
+		// Start the job this column represents. Deliberately here and NOT inside
+		// MoveTask: jobs move cards themselves when they finish, and a trigger in
+		// the store would make each job start the next one in a loop. Only a real
+		// board drag reaches this handler.
+		trigger := boardTriggerOutcome{Reason: "project not resolved"}
 		if p, perr := store.GetProjectForOrg(projectID, resolveRequestOrg(r)); perr == nil {
 			syncTaskGitHubAfterMove(store, p, t)
+			// The drag carries an authenticated user, so the job it starts runs as
+			// that person — which is what makes the run attributable.
+			trigger = maybeStartJobForColumn(store, p, t, jobOriginFromRequest(r, nil))
 		}
-		writeJSON(w, t)
+		writeJSON(w, moveResponse{Task: t, Trigger: trigger})
 	case "approve":
 		if r.Method != http.MethodPost {
 			writeError(w, 405, "method not allowed")
@@ -459,6 +467,10 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 				SpecID       string `json:"specId"`
 				TargetPhase  int    `json:"targetPhase"`
 				IdeationType string `json:"ideationType"`
+				// Model is a per-task model override for this job only — the
+				// "plan with the light model, implement with the strong one on
+				// THIS task" case, without editing org configuration.
+				Model *modelOverride `json:"model,omitempty"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeError(w, 400, "invalid json")
@@ -474,7 +486,10 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 				return
 			}
 			runner := openjob.RunnerImage("opm", "task", envOr("OPM_RUNNER_TAG", "nas"))
-			j, err := store.CreateJob(projectID, body.Action, body.SpecID, runner)
+			// Stamp the requester so the job resolves THIS user's credentials and
+			// model at run time, and so the run is attributable afterwards.
+			j, err := store.CreateJobWithOrigin(projectID, body.Action, body.SpecID, runner,
+				jobOriginFromRequest(r, body.Model))
 			if err != nil {
 				writeError(w, 400, err.Error())
 				return

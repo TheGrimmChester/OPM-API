@@ -23,7 +23,11 @@ func postImplementationJob(store *Store, j Job, p Project, taskSessionDir string
 		if !implAutoChainEnabled() {
 			return "More coding subtasks remain — enqueue run-implementation to continue.", nil
 		}
-		next, err := store.CreateJob(j.ProjectID, "run-implementation", j.SpecID, nz(j.RunnerImage, runnerImageName()))
+		// Inherit the parent's actor and pinned binding. Re-resolving here would
+		// let an org config edit or a key rotation change models between subtask
+		// 2.1 and 2.2 of the same task, on the same shared workspace.
+		next, err := store.CreateJobWithOrigin(j.ProjectID, "run-implementation", j.SpecID,
+			nz(j.RunnerImage, runnerImageName()), jobOriginFrom(j))
 		if err != nil {
 			return "", err
 		}
@@ -43,22 +47,30 @@ func autoDeliverTaskSession(store *Store, j Job, p Project, taskSessionDir strin
 	if taskSessionDir == "" || workspaceIsStub(taskSessionDir) {
 		return "All coding subtasks complete — no session workspace to deliver from.", nil
 	}
+	t, err := store.GetTask(j.ProjectID, j.SpecID)
+	if err != nil {
+		return "", err
+	}
+	autopilot := taskAutopilot(t)
 	if !peerORAConfigured() || strings.TrimSpace(p.ConnectorID) == "" || strings.TrimSpace(p.OwnerRepo) == "" {
 		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
 			fmt.Sprintf("[%s] coding phase complete — auto-deliver skipped (repo not linked / ORA missing)\n", j.RunID))
 		return "All coding subtasks complete — auto-deliver skipped (link repo + ORA for push). Workspace retained.", nil
-	}
-	t, err := store.GetTask(j.ProjectID, j.SpecID)
-	if err != nil {
-		return "", err
 	}
 	cs, err := store.GetChangeSet(j.ProjectID, j.SpecID)
 	if err != nil {
 		return "", err
 	}
 	if len(cs.Files) == 0 {
-		releaseTaskWorkspace(j.ProjectID, j.SpecID)
-		return "All coding subtasks complete — no file changes recorded; session workspace released.", nil
+		if humanReviewRequired(t) {
+			releaseTaskWorkspace(j.ProjectID, j.SpecID)
+			return "All coding subtasks complete — no file changes recorded; session workspace released.", nil
+		}
+		extra, err := chainReviewAfterDeliver(store, j)
+		if err != nil {
+			return "", err
+		}
+		return "All coding subtasks complete — no file changes recorded; session workspace retained. " + extra, nil
 	}
 
 	res, status, derr := runDeliveryFromWorkspace(context.Background(), p, t, taskSessionDir, cs, "", "", false)
@@ -81,10 +93,25 @@ func autoDeliverTaskSession(store *Store, j Job, p Project, taskSessionDir strin
 		t.DeliveryError = ""
 	})
 	_ = store.ClearChangeSet(j.ProjectID, j.SpecID)
-	releaseTaskWorkspace(j.ProjectID, j.SpecID)
+	if humanReviewRequired(t) {
+		releaseTaskWorkspace(j.ProjectID, j.SpecID)
+	}
 	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
 		fmt.Sprintf("[%s] auto-deliver OK branch=%s commit=%s pr=#%d files=%s\n",
 			j.RunID, res.Branch, shortSha(res.CommitSha), res.PRNumber, strings.Join(res.Files, ",")))
-	return fmt.Sprintf("All coding subtasks complete — delivered branch %s (commit %s, PR #%d); session workspace released.",
-		res.Branch, shortSha(res.CommitSha), res.PRNumber), nil
+	msg := fmt.Sprintf("All coding subtasks complete — delivered branch %s (commit %s, PR #%d)",
+		res.Branch, shortSha(res.CommitSha), res.PRNumber)
+	if autopilot {
+		msg += "; session workspace retained for autopilot"
+	} else {
+		msg += "; session workspace released"
+	}
+	extra, err := chainReviewAfterDeliver(store, j)
+	if err != nil {
+		return msg, err
+	}
+	if extra != "" {
+		msg += ". " + extra
+	}
+	return msg, nil
 }

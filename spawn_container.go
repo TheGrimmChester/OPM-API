@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -60,9 +61,12 @@ func repoMountSource(workDir string) string {
 }
 
 // runTaskContainer starts one hardened ephemeral opm-runner-task container.
-// When OPM_MODEL_API_KEY or CURSOR_API_KEY is set, enables network + passes model env via --env-file
-// (Cursor Agent CLI by default; OpenAI when OPM_MODEL_PROVIDER=openai).
-// (Open-Job-Go ScrubEnv strips API_KEY from -e flags). Output lands in /out/result.json.
+//
+// The model and the API key come from OAM when PEER_OAM_URL is set — resolved for
+// this job's agent phase, scoped to the acting user's org and their personal
+// override. Without PEER_OAM_URL the pre-OAM environment path applies unchanged.
+// Either way the credential travels via --env-file, because Open-Job-Go's ScrubEnv
+// strips API_KEY from -e flags. Output lands in /out/result.json.
 //
 // workDir is the prepared clone of the linked repository. For run-implementation it
 // is the task-scoped session repo (read-write). Other actions mount read-only at /repo.
@@ -71,6 +75,18 @@ func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome,
 	if _, err := exec.LookPath("docker"); err != nil {
 		return out, fmt.Errorf("docker CLI not found: %w", err)
 	}
+
+	agentKey := strings.TrimSpace(j.AgentKey)
+	if agentKey == "" {
+		agentKey = agentKeyForAction(j.Action)
+	}
+	modelCfg, err := resolveJobModelConfig(context.Background(), j)
+	if err != nil {
+		// Do not fall back to the deployment-wide key: that would run the job as
+		// somebody else. Fail the job with the reason.
+		return out, fmt.Errorf("model resolution failed for agent %q: %w", agentKey, err)
+	}
+	j = recordJobResolution(store, j, modelCfg, agentKey)
 	img := strings.TrimSpace(j.RunnerImage)
 	if img == "" {
 		img = runnerImageName()
@@ -106,18 +122,15 @@ func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome,
 	if repoMounted {
 		env["OPM_REPO_DIR"] = containerRepoPath
 	}
-	if v := envOr("OPM_MODEL_BASE_URL", ""); v != "" {
-		env["OPM_MODEL_BASE_URL"] = v
+	if agentKey != "" {
+		env["OPM_AGENT_KEY"] = agentKey
 	}
-	env["OPM_MODEL"] = envOr("OPM_MODEL", "auto")
-	for _, k := range []string{
-		"OPM_MODEL_PLANNING", "OPM_MODEL_CODING", "OPM_MODEL_REVIEW",
-		"OPM_MODEL_IDEATION", "OPM_MODEL_ROADMAP_DISCOVERY", "OPM_MODEL_ROADMAP_FEATURES",
-	} {
-		env[k] = phaseModel(k)
-	}
-	if v := envOr("OPM_MODEL_PROVIDER", ""); v != "" {
-		env["OPM_MODEL_PROVIDER"] = v
+	// One model, decided upstream. The six OPM_MODEL_<PHASE> variables are gone:
+	// handing the runner every phase's model and letting it pick re-derived a
+	// decision the control plane had already made, and carried every phase's
+	// configuration into every container.
+	for k, v := range modelEnvForJob(modelCfg) {
+		env[k] = v
 	}
 	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
@@ -147,18 +160,18 @@ func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome,
 	args = insertBeforeImage(args, img, "-v", inDir+":/in:ro", "-v", outDir+":/out")
 	if repoMount != "" {
 		mountOpt := ":ro"
-		if j.Action == "run-implementation" {
+		if taskWorkspaceWriteMount(j.Action) {
 			mountOpt = ":rw"
 		}
 		args = insertBeforeImage(args, img, "-v", repoMount+":"+containerRepoPath+mountOpt)
 	}
 
-	wantModel := modelAPIKeyPresent()
+	wantModel := modelCfg.hasKey()
 	if wantModel {
 		netName := envOr("OPM_RUNNER_NETWORK", "bridge")
 		args = replaceNetwork(args, netName)
 
-		envFile, cleanup, err := writeModelEnvFile()
+		envFile, cleanup, err := writeModelEnvFile(modelCfg)
 		if err != nil {
 			return out, err
 		}
@@ -190,37 +203,34 @@ func runTaskContainer(store *Store, j Job, workDir string) (containerRunOutcome,
 	return out, nil
 }
 
-func writeModelEnvFile() (path string, cleanup func(), err error) {
+// writeModelEnvFile writes the resolved credential and model to a 0600 temp file
+// for --env-file. The key travels this way rather than as -e because Open-Job-Go's
+// ScrubEnv strips API_KEY from -e flags, and because an env file does not appear
+// in the process table.
+//
+// Only the ONE resolved model is written — see modelEnvForJob.
+func writeModelEnvFile(cfg jobModelConfig) (path string, cleanup func(), err error) {
 	f, err := os.CreateTemp("", "opm-model-env-*")
 	if err != nil {
 		return "", func() {}, err
 	}
 	path = f.Name()
 	cleanup = func() { _ = os.Remove(path) }
-	key := strings.TrimSpace(os.Getenv("OPM_MODEL_API_KEY"))
-	if key == "" {
-		key = strings.TrimSpace(os.Getenv("CURSOR_API_KEY"))
-	}
+
+	// Both names carry the same value: the Cursor CLI reads CURSOR_API_KEY, the
+	// OpenAI path reads OPM_MODEL_API_KEY.
 	lines := []string{
-		"OPM_MODEL_API_KEY=" + key,
-		"CURSOR_API_KEY=" + key,
-		"OPM_MODEL=" + envOr("OPM_MODEL", "auto"),
+		"OPM_MODEL_API_KEY=" + cfg.APIKey,
+		"CURSOR_API_KEY=" + cfg.APIKey,
 	}
-	if v := envOr("OPM_MODEL_BASE_URL", ""); v != "" {
-		lines = append(lines, "OPM_MODEL_BASE_URL="+v)
+	for k, v := range modelEnvForJob(cfg) {
+		lines = append(lines, k+"="+v)
 	}
-	if v := envOr("OPM_MODEL_PROVIDER", ""); v != "" {
-		lines = append(lines, "OPM_MODEL_PROVIDER="+v)
-	}
+	// Image-provided, not a credential: where the Cursor binary lives.
 	if v := envOr("OPM_CURSOR_AGENT_BIN", ""); v != "" {
 		lines = append(lines, "OPM_CURSOR_AGENT_BIN="+v)
 	}
-	for _, k := range []string{
-		"OPM_MODEL_PLANNING", "OPM_MODEL_CODING", "OPM_MODEL_REVIEW",
-		"OPM_MODEL_IDEATION", "OPM_MODEL_ROADMAP_DISCOVERY", "OPM_MODEL_ROADMAP_FEATURES",
-	} {
-		lines = append(lines, k+"="+phaseModel(k))
-	}
+	sort.Strings(lines)
 	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
 		_ = f.Close()
 		cleanup()

@@ -24,6 +24,9 @@ func applyRunnerResult(store *Store, j Job, rr RunnerResult, taskWorkDir string)
 	case "run-review":
 		msg, err := applyModelReview(store, j, rr)
 		return true, msg, err
+	case "run-qa-fix":
+		msg, err := applyModelQaFix(store, j, rr, taskWorkDir)
+		return true, msg, err
 	case "run-ideation":
 		if len(rr.Ideas) == 0 {
 			return false, "", nil
@@ -246,10 +249,21 @@ func applyModelReview(store *Store, j Job, rr RunnerResult) (string, error) {
 	_ = store.PutProgress(j.ProjectID, j.SpecID, TaskProgress{
 		Progress: pct(done, total), SubtaskCompleted: done, SubtaskTotal: total, RunID: j.RunID, CurrentPhaseName: "Review",
 	})
-	_, _ = store.MoveTask(j.ProjectID, j.SpecID, "human_review")
+	task, _ := store.GetTask(j.ProjectID, j.SpecID)
+	toStatus := reviewPassStatus(task)
+	_, _ = store.MoveTask(j.ProjectID, j.SpecID, toStatus)
 	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "validation",
-		fmt.Sprintf("[%s] model review PASS (%s) → human_review\n", j.RunID, nz(rr.Model, "?")))
-	return fmt.Sprintf("Review PASS (model/%s): wrote REVIEW.md; moved to human_review.", nz(rr.Model, "model")), nil
+		fmt.Sprintf("[%s] model review PASS (%s) → %s\n", j.RunID, nz(rr.Model, "?"), toStatus))
+	return fmt.Sprintf("Review PASS (model/%s): wrote REVIEW.md; moved to %s.", nz(rr.Model, "model"), toStatus), nil
+}
+
+func applyModelQaFix(store *Store, j Job, rr RunnerResult, taskWorkDir string) (string, error) {
+	msg, err := builtinQaFix(store, j)
+	if err != nil {
+		return msg, err
+	}
+	msg = strings.Replace(msg, "(builtin)", "(model/"+nz(rr.Model, "model")+")", 1)
+	return strings.TrimSpace(msg) + " " + recordImplementationChangeSet(store, j, rr, taskWorkDir), nil
 }
 
 func applyModelIdeation(store *Store, j Job, rr RunnerResult) (string, error) {
@@ -666,4 +680,3 @@ func containsString(list []string, want string) bool {
 	}
 	return false
 }
-

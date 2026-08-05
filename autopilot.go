@@ -26,8 +26,13 @@ func reviewPassStatus(t Task) string {
 	return "review"
 }
 
+// chainJobAsync is the single funnel for autopilot chaining. It carries the
+// parent's acting identity forward; CreateJobWithOrigin drops the pinned model
+// when the next action is a different agent phase (coding → review → qa_fix each
+// resolve their own).
 func chainJobAsync(store *Store, j Job, action string) (Job, error) {
-	next, err := store.CreateJob(j.ProjectID, action, j.SpecID, nz(j.RunnerImage, runnerImageName()))
+	next, err := store.CreateJobWithOrigin(j.ProjectID, action, j.SpecID,
+		nz(j.RunnerImage, runnerImageName()), jobOriginFrom(j))
 	if err != nil {
 		return Job{}, err
 	}
@@ -48,11 +53,8 @@ func postReviewJob(store *Store, j Job, p Project, reviewPassed bool) (string, e
 		return "Review complete — task paused; automation stopped.", nil
 	}
 	if !reviewPassed {
-		if !taskAutopilot(t) {
-			return "Review FAIL — enqueue run-qa-fix or run-implementation when ready.", nil
-		}
 		if !implAutoChainEnabled() {
-			return "Review FAIL — enqueue run-qa-fix to continue autopilot.", nil
+			return "Review FAIL — enqueue run-qa-fix to continue.", nil
 		}
 		next, err := chainJobAsync(store, j, "run-qa-fix")
 		if err != nil {

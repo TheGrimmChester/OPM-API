@@ -132,11 +132,11 @@ update end to end therefore needs a deployment with that permission granted.
 - `GET /api/projects/{id}/board` → `{ columns, board }`
 - `PUT /api/projects/{id}/board` → replace column membership
 - `GET /api/projects/{id}/tasks` → `{ tasks }`
-- `POST /api/projects/{id}/tasks` `{ title?, description, requireReviewBeforeCoding?, ideationId? }`
+- `POST /api/projects/{id}/tasks` `{ title?, description, requireReviewBeforeCoding?, humanReviewRequired?, ideationId? }` — `humanReviewRequired` defaults to **true** when omitted (human gate after automated review).
 - `GET /api/projects/{id}/tasks/{specId}`
-- `PATCH /api/projects/{id}/tasks/{specId}`
+- `PATCH /api/projects/{id}/tasks/{specId}` — includes `humanReviewRequired` (boolean). When **true** (default), after coding and delivery the bot runs automated review (+ qa-fix if needed) and stops at `human_review` for a human. When **false** (autopilot), the bot continues through merge and marks the task `done` without a human gate; the task session workspace is retained until completion.
 - `DELETE /api/projects/{id}/tasks/{specId}`
-- `POST /api/projects/{id}/tasks/{specId}/move` `{ toStatus }`
+- `POST /api/projects/{id}/tasks/{specId}/move` `{ toStatus }` → the task fields (unchanged) plus `trigger`. **Moving a card starts the job that column represents** — see [Board moves start jobs](#board-moves-start-jobs).
 - `POST /api/projects/{id}/tasks/{specId}/approve` → move `human_review` → `queue` (approve for coding)
 - `GET /api/projects/{id}/tasks/{specId}/plan`
 - `GET /api/projects/{id}/tasks/{specId}/progress`
@@ -251,10 +251,12 @@ Limits that are easy to misread from the action list above:
   Coding jobs mount `$OPM_JOB_TMP/tasks/{projectId}/{specId}/repo` read-write at `/repo`.
   Each subtask still runs in a **fresh ephemeral runner container**, but all coding steps share
   the same host volume; model `files[]` output is applied to disk immediately and merged into
-  the task change set. When the last coding subtask succeeds, delivery can run automatically
-  (`OPM_IMPL_AUTO_DELIVER`, default on) and the workspace is released. **Pause** keeps the
-  workspace; auto-chain stops until **resume**. **Review** releases the task workspace and uses
-  a fresh read-only clone in a new container.
+  the task change set.   When the last coding subtask succeeds, delivery can run automatically
+  (`OPM_IMPL_AUTO_DELIVER`, default on). **Human review gate** (`humanReviewRequired`, default on):
+  after deliver the bot chains `run-review` (+ `run-qa-fix` if needed) and stops at `human_review`;
+  the session workspace is released at review start. **Autopilot** (`humanReviewRequired: false`):
+  the same session workspace stays mounted for implementation, qa-fix, and review until the PR is
+  merged and the task is `done`. **Pause** keeps the workspace; auto-chain stops until **resume**.
 - **Other jobs still use ephemeral clones.** Planning, review, ideation, and roadmap jobs clone
   under `$OPM_JOB_TMP/{runId}/repo`, mount read-only, and discard scratch after the run.
   Delivery without a live task workspace still clones under `$OPM_JOB_TMP/deliver-<uuid>/repo`.
@@ -264,3 +266,57 @@ Limits that are easy to misread from the action list above:
   write agent state into the customer repository.
 - **`skip-to-phase`** requires `specId` and 1-based `targetPhase`; it marks earlier plan subtasks complete and advances progress.
 
+
+## Board moves start jobs
+
+Dragging a card to a column starts the job that column represents, running as the
+user who moved it.
+
+| Target column | Starts | Notes |
+|---|---|---|
+| `queue` | `run-planning` | needs a spec |
+| `in_progress` | `run-implementation` | opens/continues the task session |
+| `review` | `run-review` | `humanReviewRequired` then decides whether autopilot continues to merge |
+| `backlog` | nothing | parking |
+| `human_review` | nothing | this *is* the human gate — where autopilot parks |
+| `done` | nothing | autopilot already merges and moves here itself |
+
+The move response adds a `trigger` object; the task fields stay at the top level,
+so existing callers are unaffected.
+
+```json
+{ "specId": "001-thing", "status": "in_progress", "...": "…",
+  "trigger": { "started": true, "action": "run-implementation",
+               "runId": "1785…", "reason": "board move to in_progress started run-implementation" } }
+```
+
+A no-op always says why (`"started": false` with a `reason`) — "I dragged the card
+and nothing happened" should never need a log dive.
+
+### Why the trigger is not in the store
+
+`MoveTask` is the single validated choke point for column changes, which makes it
+the obvious place for this hook and the wrong one. **Jobs move cards themselves**
+when they finish (`model_apply.go`, `job_runner.go`, `autopilot.go`), and
+`github_issue_sync.go` moves them when a GitHub issue is pulled. A trigger in the
+store would make each of those start another job — review → `human_review` →
+review, forever, burning model tokens while looking like a board bug.
+
+So the trigger lives at the HTTP boundary and only a real board drag reaches it.
+`TestTriggerIsReachableOnlyFromTheMoveHandler` scans the package sources and fails
+if any other file references it.
+
+### Guards
+
+- **Dedupe.** Any active job (`queued`/`starting`/`running`) on the same task
+  blocks a new one — not just the same action. A double drag, an optimistic-UI
+  retry, or a drag during a running job cannot fan out two `run-implementation`
+  jobs writing the same shared workspace. If the job list cannot be read, the
+  trigger refuses rather than risking a duplicate.
+- **Paused tasks.** A paused task blocks the trigger, so a drag is not a back door
+  around the pause that stops automation everywhere else.
+- **No undo.** Dragging `review` → `in_progress` re-opens implementation; it does
+  not revert a delivered branch or close a PR. Undoing delivery stays a deliberate
+  action.
+- **Per project.** `autoStartOnMove` on the project (default **on**, including for
+  projects that predate the field) turns the whole behaviour off for a manual board.

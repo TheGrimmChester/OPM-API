@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -43,6 +44,16 @@ func main() {
 		log.Printf("auth: ENABLED (OPA_AUTH_REQUIRED); tenant org scope enforced")
 	} else {
 		log.Printf("auth: disabled — endpoints open")
+	}
+
+	// Register OPM's agents with OAM so the console can offer a model picker per
+	// phase. Best-effort and logged: without it a newly added job kind would
+	// resolve against the product default with nobody noticing.
+	if oamConfigured() {
+		log.Printf("oam: %s — models and API keys resolve per job (OPM_MODEL* no longer participate)", oamPeerURL())
+		go publishAgentCatalog(context.Background())
+	} else {
+		log.Printf("oam: PEER_OAM_URL unset — using the legacy OPM_MODEL*/CURSOR_API_KEY environment path")
 	}
 
 	mux := http.NewServeMux()

@@ -68,7 +68,22 @@ func parseRunnerResultJSON(raw []byte) (RunnerResult, bool) {
 	return RunnerResult{}, false
 }
 
+// modelAPIKeyPresent reports whether a model-backed run is possible.
+//
+// With OAM configured this is true because the key is resolved per job from the
+// acting user's org — there is no single process-wide key to inspect, and this
+// function cannot know whether a *particular* org has one without resolving. The
+// spawn probe therefore reports availability, not a guarantee; a job with no
+// credential for its org fails closed at resolve time with credential_unavailable.
+//
+// Getting this wrong is user-visible: the probe is what people read to decide
+// whether the model path is live, and before OAM it was the only signal. A bare
+// env check here would report "unset — fallback" on a correctly configured OAM
+// deployment.
 func modelAPIKeyPresent() bool {
+	if oamConfigured() {
+		return true
+	}
 	return strings.TrimSpace(envOr("OPM_MODEL_API_KEY", "")) != "" ||
 		strings.TrimSpace(envOr("CURSOR_API_KEY", "")) != ""
 }
@@ -101,6 +116,11 @@ func modelForAction(action string) string {
 }
 
 func modelConfigHonesty() string {
+	if oamConfigured() {
+		return "models and API keys resolve per job from OAM (PEER_OAM_URL), scoped to the acting user's org " +
+			"and their per-agent binding; a job whose org has no credential fails closed with credential_unavailable. " +
+			"OPM_MODEL* environment variables no longer participate."
+	}
 	if !modelAPIKeyPresent() {
 		return "OPM_MODEL_API_KEY/CURSOR_API_KEY unset — runner reports fallback; control plane uses builtin artifact helpers."
 	}

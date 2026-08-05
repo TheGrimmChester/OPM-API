@@ -965,8 +965,18 @@ func (s *Store) GetJob(projectID, runID string) (Job, error) {
 	return j, err
 }
 
+// CreateJob creates an anonymous job (no acting identity). Retained for call
+// sites that genuinely have no actor; prefer CreateJobWithOrigin so the job can
+// resolve the right user's credentials and model.
 func (s *Store) CreateJob(projectID, action, specID, runnerImage string) (Job, error) {
+	return s.CreateJobWithOrigin(projectID, action, specID, runnerImage, JobOrigin{})
+}
+
+// CreateJobWithOrigin creates a job carrying an acting identity and, when the
+// origin came from a parent job, that parent's pinned model binding.
+func (s *Store) CreateJobWithOrigin(projectID, action, specID, runnerImage string, origin JobOrigin) (Job, error) {
 	var created Job
+	agentKey := agentKeyForAction(action)
 	err := s.withProject(projectID, func(p Project) error {
 		now := nowUTC()
 		runID := fmt.Sprintf("%d-%s", now.UnixMilli(), uuid.NewString())
@@ -980,6 +990,21 @@ func (s *Store) CreateJob(projectID, action, specID, runnerImage string) (Job, e
 			UpdatedAt:   now,
 			Attempt:     1,
 			RunnerImage: runnerImage,
+
+			OrganizationID: origin.OrganizationID,
+			ActorUsername:  origin.ActorUsername,
+			AgentKey:       agentKey,
+			ModelOverride:  origin.ModelOverride,
+		}
+		// Carry the pinned binding only within the same agent phase. Crossing
+		// phases (coding → review) must re-resolve, or every phase would run the
+		// model configured for the first one.
+		if origin.pinnedFor(agentKey) {
+			j.ResolvedProvider = origin.ResolvedProvider
+			j.ResolvedModel = origin.ResolvedModel
+			j.ResolvedModelSource = origin.ResolvedModelSource
+			j.ResolvedKeyScope = origin.ResolvedKeyScope
+			j.ResolvedAgentKey = origin.ResolvedAgentKey
 		}
 		if err := s.writeJSON(filepath.Join(s.projectDir(p), "runs", runID+".json"), j); err != nil {
 			return err
