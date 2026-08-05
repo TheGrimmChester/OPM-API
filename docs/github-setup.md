@@ -66,9 +66,31 @@ Rebuild with production tags (`opm-api:nas`, `opm-dashboard:nas`) — never smok
 
 After linking a repo:
 
-1. **Roadmap** or **Board → task detail** → pick a **GitHub Milestone** (listed from the connected repo via ORA).
+1. **Roadmap** or **Board → task detail** → pick a **GitHub Milestone** (listed from the connected repo via ORA). **Unassign** reverses it for a task, a roadmap feature or a roadmap phase and leaves the milestone itself on GitHub.
 2. **Bind GitHub Project** (Projects v2) once per OPM project; then **Sync to Project** on tasks/features creates a draft item and best-effort maps board Status. **Unbind** reverses either level — the project-level bind or a single task's board item — and leaves the GitHub Project and its items untouched.
 3. Renaming a task or editing its description re-syncs the bound board item. If the board cannot be updated the reason is shown on the task (`githubProjectSyncError`) and written to the `github-project-sync` spec log; it is never reported as success. Note this needs the organization projects permission below.
+
+```bash
+BASE=http://<host>:8096/api/projects/$PROJECT_ID/github/milestones
+H=(-H "Authorization: Bearer $TOKEN" -H "X-Organization-ID: default-org" -H "X-Project-ID: $PROJECT_ID" -H 'Content-Type: application/json')
+
+# Bind milestone #4 to a task, creating it on GitHub if needed
+curl -sf "${H[@]}" -X POST $BASE/assign   -d '{"specId":"'$SPEC'","milestoneNumber":4}'
+# Drop the bind again — OPM-side only
+curl -sf "${H[@]}" -X POST $BASE/unassign -d '{"specId":"'$SPEC'"}'
+# Roadmap targets work the same way, and can be combined in one call
+curl -sf "${H[@]}" -X POST $BASE/unassign -d '{"featureId":"f1","phaseId":"ph1"}'
+```
+
+`unassign` never calls GitHub: the milestone is **neither closed nor deleted**, and issues already carrying it
+keep it. It only forgets the OPM-side bind, appends the fact to the `github-milestone-sync` spec log when a task
+is involved, and answers with a machine-readable `status` — `not_bound` when there was nothing to clear,
+`task_not_found` / `feature_not_found` / `phase_not_found` for an id that does not resolve, `invalid_request`
+when no target was sent. A rejected call writes nothing, so a bad `phaseId` cannot leave a feature
+half-unassigned. Full table: [api.md](api.md#milestone-bind--unassign).
+
+Patching `githubMilestoneNumber` to `0` through `PATCH …/tasks/{specId}` also clears a task's milestone fields,
+but it is silent, leaves no spec-log entry and cannot reach a feature or phase. Prefer `unassign`.
 
 ## 6. Link a task to a GitHub Issue
 
@@ -141,7 +163,8 @@ That last row is why a refresh cannot drag a task out of `human_review`.
 | Feature | Required permission |
 |---------|---------------------|
 | Clone a repo for a job | **Contents** read, **Metadata** read |
-| Milestones | **Issues** read/write |
+| Milestones — list / assign | **Issues** read/write |
+| Milestones — unassign | none; it never leaves OPM |
 | Issue link / push / pull | **Issues** read/write |
 | Projects v2 — list, item sync, title refresh, Status on move | **Organization permissions › Projects: Read and write** (`organization_projects: write`); without it milestone bind and Issue sync still work |
 | Push a delivery branch | **Contents** read **and write**, **Metadata** read |

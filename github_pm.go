@@ -148,6 +148,10 @@ func handleGitHubMilestones(w http.ResponseWriter, r *http.Request, store *Store
 		writeJSON(w, result)
 		return
 	}
+	if rest[0] == "unassign" {
+		handleMilestoneUnassign(w, r, store, p)
+		return
+	}
 	writeError(w, 404, "not found")
 }
 
