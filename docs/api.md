@@ -132,7 +132,7 @@ update end to end therefore needs a deployment with that permission granted.
 - `GET /api/projects/{id}/board` → `{ columns, board }`
 - `PUT /api/projects/{id}/board` → replace column membership
 - `GET /api/projects/{id}/tasks` → `{ tasks }`
-- `POST /api/projects/{id}/tasks` `{ title?, description, requireReviewBeforeCoding?, humanReviewRequired?, ideationId? }` — `humanReviewRequired` defaults to **true** when omitted (human gate after automated review).
+- `POST /api/projects/{id}/tasks` `{ title?, description, requireReviewBeforeCoding?, humanReviewRequired?, ideationId? }` — defaults to autopilot (`humanReviewRequired=false`) and always enqueues `run-pipeline` (plan → all subtasks → deliver → review → `done`)
 - `GET /api/projects/{id}/tasks/{specId}`
 - `PATCH /api/projects/{id}/tasks/{specId}` — includes `humanReviewRequired` (boolean). When **true** (default), after coding and delivery the bot runs automated review (+ qa-fix if needed) and stops at `human_review` for a human. When **false** (autopilot), the bot continues through merge and marks the task `done` without a human gate; the task session workspace is retained until completion.
 - `DELETE /api/projects/{id}/tasks/{specId}`

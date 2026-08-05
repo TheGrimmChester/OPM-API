@@ -237,6 +237,13 @@ func executeJob(store *Store, j Job) {
 			resultMsg += " " + extra
 		}
 	}
+	if (origAction == "run-planning" || origAction == "run-followup-planning") && j.SpecID != "" {
+		if extra, perr := postPlanningJob(store, j); perr != nil {
+			resultMsg += fmt.Sprintf(" Post-planning: %v.", perr)
+		} else if extra != "" {
+			resultMsg += " " + extra
+		}
+	}
 	if origAction == "run-review" && j.SpecID != "" {
 		passed := lastReviewPassed(store, j)
 		if extra, perr := postReviewJob(store, j, p, passed); perr != nil {

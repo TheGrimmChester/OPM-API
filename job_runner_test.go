@@ -9,6 +9,7 @@ import (
 
 func TestBuiltinPlanningAndImplementation(t *testing.T) {
 	t.Setenv("OPM_FORCE_BUILTIN", "1")
+	t.Setenv("OPM_IMPL_AUTO_CHAIN", "0")
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +110,7 @@ func TestBuiltinPlanningAndImplementation(t *testing.T) {
 
 func TestBuiltinPlanningRequireReview(t *testing.T) {
 	t.Setenv("OPM_FORCE_BUILTIN", "1")
+	t.Setenv("OPM_IMPL_AUTO_CHAIN", "0")
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +134,7 @@ func TestBuiltinPlanningRequireReview(t *testing.T) {
 
 func TestBuiltinPauseResumeAndRecover(t *testing.T) {
 	t.Setenv("OPM_FORCE_BUILTIN", "1")
+	t.Setenv("OPM_IMPL_AUTO_CHAIN", "0")
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -224,6 +227,7 @@ func TestBuiltinPauseResumeAndRecover(t *testing.T) {
 
 func TestBuiltinRoadmapIdeationAndSkip(t *testing.T) {
 	t.Setenv("OPM_FORCE_BUILTIN", "1")
+	t.Setenv("OPM_IMPL_AUTO_CHAIN", "0")
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

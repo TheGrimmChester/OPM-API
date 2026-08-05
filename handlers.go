@@ -198,7 +198,9 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 				writeError(w, 400, "invalid json")
 				return
 			}
-			humanReview := true
+			// Default autopilot and enqueue run-pipeline (plan → all subtasks → deliver →
+			// review → done). Pass humanReviewRequired:true to stop at human_review.
+			humanReview := false
 			var patch map[string]interface{}
 			if err := json.Unmarshal(raw, &patch); err == nil {
 				if _, ok := patch["humanReviewRequired"]; ok {
@@ -210,6 +212,7 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 				writeError(w, 400, err.Error())
 				return
 			}
+			_ = enqueuePipelineJob(store, projectID, t.SpecID, jobOriginFromRequest(r, nil))
 			writeJSON(w, t)
 		default:
 			writeError(w, 405, "method not allowed")

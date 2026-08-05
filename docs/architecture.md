@@ -98,7 +98,9 @@ not a disabled feature.
 
 Ordered: `backlog` → `queue` → `in_progress` → `review` → `human_review` → `done`.
 
-`review` is the automated review-runner column. Human approval lives in `human_review`.
+`review` is the automated review-runner column. Human approval lives in `human_review` when `humanReviewRequired` is true.
+
+**Auto pipeline:** creating a task defaults to autopilot and enqueues `run-pipeline` (PR only after all coding subtasks) through to `done`.
 
 ## Boundary vs ORA / Hub
 

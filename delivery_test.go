@@ -497,6 +497,7 @@ func TestDeliverNoChangesProduced(t *testing.T) {
 	}
 
 	// A builtin implementation run records no change set, so deliver stays honest.
+	t.Setenv("OPM_IMPL_AUTO_CHAIN", "0")
 	j, err := e.store.CreateJob(e.project.ID, "run-planning", e.task.SpecID, "opm-runner-task:nas")
 	if err != nil {
 		t.Fatal(err)

@@ -12,6 +12,7 @@ and capability routes need an operator token), so nothing here is claimed as ver
 - Hub-auth via dashboard `/hub-auth` proxy; JWT accepted by `opm-api`
 - Hub org discovery + ORA GitHub connectors / repo list / project link
 - Board task create / move / edit / delete; **drag-and-drop**; task action menu; require-review; approve-for-coding
+- **Auto pipeline on create**: new tasks default to autopilot and enqueue `run-pipeline` through to `done` (PR after all coding subtasks)
 - Task detail drawer: plan / progress / spec / logs + run actions (incl. pause/resume/recover)
 - Ideation create/edit/delete + promote; roadmap phase/feature create/edit/delete
 - **Roadmap / ideation agents**: `run-roadmap-discovery`, `run-roadmap-features`, `run-ideation` prefer model apply with repo-aware context packs (`projectIndex`, ideation/discovery/features); builtins remain fallback
