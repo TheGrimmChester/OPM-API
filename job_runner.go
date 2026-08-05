@@ -15,6 +15,7 @@ import (
 // On spawn failure or OPM_FORCE_BUILTIN=1, it falls back to builtin-only execution.
 func executeJob(store *Store, j Job) {
 	defer cleanupRunnerScratch(j.RunID)
+	origAction := j.Action
 
 	execution := "builtin"
 	fail := func(msg string, err error) {
@@ -229,14 +230,14 @@ func executeJob(store *Store, j Job) {
 		_ = store.UpdateJob(j.ProjectID, j)
 		return
 	}
-	if j.Action == "run-implementation" && j.SpecID != "" {
+	if origAction == "run-implementation" && j.SpecID != "" {
 		if extra, perr := postImplementationJob(store, j, p, taskSessionDir); perr != nil {
 			resultMsg += fmt.Sprintf(" Post-implementation: %v.", perr)
 		} else if extra != "" {
 			resultMsg += " " + extra
 		}
 	}
-	if j.Action == "run-review" && j.SpecID != "" {
+	if origAction == "run-review" && j.SpecID != "" {
 		passed := lastReviewPassed(store, j)
 		if extra, perr := postReviewJob(store, j, p, passed); perr != nil {
 			resultMsg += fmt.Sprintf(" Post-review: %v.", perr)
@@ -244,7 +245,7 @@ func executeJob(store *Store, j Job) {
 			resultMsg += " " + extra
 		}
 	}
-	if j.Action == "run-qa-fix" && j.SpecID != "" {
+	if origAction == "run-qa-fix" && j.SpecID != "" {
 		if extra, perr := postQaFixJob(store, j); perr != nil {
 			resultMsg += fmt.Sprintf(" Post-qa-fix: %v.", perr)
 		} else if extra != "" {
@@ -253,13 +254,14 @@ func executeJob(store *Store, j Job) {
 	}
 	j.State = "completed"
 	j.Execution = execution
+	j.Action = origAction
 	j.Message = resultMsg
 	j.CompletedAt = &done
 	pct = 100
 	j.ProgressPct = &pct
 	_ = store.UpdateJob(j.ProjectID, j)
 
-	switch j.Action {
+	switch origAction {
 	case "mark-stuck", "pause-task", "resume-task", "recover-subtask", "skip-to-phase":
 		// These actions write their own project status.json.
 	default:

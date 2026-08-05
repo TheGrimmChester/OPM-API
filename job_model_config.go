@@ -129,7 +129,19 @@ func recordJobResolution(store *Store, j Job, cfg jobModelConfig, agentKey strin
 	j.ResolvedKeyScope = cfg.KeyScope
 	j.ResolvedAgentKey = agentKey
 	if store != nil {
-		if err := store.UpdateJob(j.ProjectID, j); err != nil {
+		// Merge resolution onto the persisted job without clobbering Action/State/
+		// Message. Pipeline steps temporarily flip Action for the runner env while
+		// sharing the parent RunID — writing the whole struct would rename the job.
+		persisted, err := store.GetJob(j.ProjectID, j.RunID)
+		if err != nil {
+			persisted = j
+		}
+		persisted.ResolvedProvider = j.ResolvedProvider
+		persisted.ResolvedModel = j.ResolvedModel
+		persisted.ResolvedModelSource = j.ResolvedModelSource
+		persisted.ResolvedKeyScope = j.ResolvedKeyScope
+		persisted.ResolvedAgentKey = j.ResolvedAgentKey
+		if err := store.UpdateJob(j.ProjectID, persisted); err != nil {
 			log.Printf("job %s: could not record resolution: %v", j.RunID, err)
 		}
 	}
