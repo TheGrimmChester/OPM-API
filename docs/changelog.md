@@ -16,6 +16,13 @@
 - Feature: unbind. `POST …/github/projects/unbind` clears the project-level Projects v2 bind and
   `POST …/github/projects/items/unbind` clears a single task's board-item bind; both leave GitHub untouched.
   `BindGitHubProject` now rejects a blank `projectId` instead of silently unbinding.
+- Feature: milestone unassign. `POST …/github/milestones/unassign` `{ specId?|featureId?|phaseId? }` is the
+  explicit inverse of `milestones/assign` and clears the bind on a task, a roadmap feature and/or a roadmap
+  phase. The GitHub milestone is **neither closed nor deleted** — no peer call is made at all. Answers a
+  machine-readable `status` (`ok`, `invalid_request`, `not_bound`, `task_not_found`, `feature_not_found`,
+  `phase_not_found`, `roadmap_unreadable`) and appends the unassign to the `github-milestone-sync` spec log.
+  Previously the only way to clear a bind was patching `githubMilestoneNumber` to `0`, which is silent, logs
+  nothing and cannot reach a feature or phase.
 - Note: Projects v2 needs **Organization permissions › Projects: Read and write** on the GitHub App
   installation, which the current installation does not have. Until it is granted every board call returns
   `missing_organization_projects` with the permission named; milestone and Issue routes are unaffected.
