@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -35,6 +36,11 @@ type jobModelConfig struct {
 
 	// FromOAM distinguishes a resolved config from the legacy env path.
 	FromOAM bool
+
+	// Candidates is the ordered endpoint list the runner walks. Empty means the
+	// single {Provider, Model, BaseURL, APIKey} above is all there is, which is the
+	// legacy path and what an older OAM returns.
+	Candidates []resolvedEndpointCandidate
 }
 
 // hasKey reports whether a model-backed run is possible at all.
@@ -80,6 +86,7 @@ func resolveJobModelConfig(ctx context.Context, j Job) (jobModelConfig, error) {
 		ModelSource: b.ModelSource,
 		KeyScope:    b.KeyScope,
 		FromOAM:     true,
+		Candidates:  b.Candidates,
 	}, nil
 }
 
@@ -147,4 +154,52 @@ func modelEnvForJob(cfg jobModelConfig) map[string]string {
 		env["OPM_MODEL_BASE_URL"] = u
 	}
 	return env
+}
+
+// candidateEnvLines renders the resolved endpoint list as numbered environment
+// variables for the runner's --env-file.
+//
+// Numbered variables rather than a JSON blob, because the credentials have to
+// travel through the env file anyway (ScrubEnv strips API_KEY from -e flags, and
+// an env file stays out of the process table). Splitting configuration into JSON
+// and keys into env would let the two arrive out of step — a candidate list
+// pointing at endpoints whose keys were not written.
+//
+// With no candidates this returns nothing and the runner falls back to the single
+// OPM_MODEL_API_KEY / OPM_MODEL* pair, which is the legacy contract.
+func candidateEnvLines(cfg jobModelConfig) []string {
+	if len(cfg.Candidates) == 0 {
+		return nil
+	}
+	out := []string{fmt.Sprintf("OPM_MODEL_CANDIDATE_COUNT=%d", len(cfg.Candidates))}
+	for i, c := range cfg.Candidates {
+		p := fmt.Sprintf("OPM_MODEL_%d_", i+1)
+		add := func(suffix, v string) {
+			if strings.TrimSpace(v) == "" {
+				return
+			}
+			// A newline in any of these would forge additional env entries in the
+			// file — including overwriting a credential. The values come from
+			// OAM's validated endpoint rows, so this is belt and braces rather
+			// than a known hole, but the file format has no escaping at all.
+			out = append(out, p+suffix+"="+sanitizeEnvValue(v))
+		}
+		add("ENDPOINT_ID", c.EndpointID)
+		add("KIND", c.Kind)
+		add("TRANSPORT", c.Transport)
+		add("PROVIDER", c.Provider)
+		add("BASE_URL", c.BaseURL)
+		add("MODEL", c.Model)
+		add("CLI_COMMAND", c.CLICommand)
+		add("CLI_ARGS", strings.Join(c.CLIArgs, " "))
+		add("API_KEY", c.APIKey)
+	}
+	return out
+}
+
+// sanitizeEnvValue strips the characters that would break out of one env-file line.
+func sanitizeEnvValue(v string) string {
+	v = strings.ReplaceAll(v, "\r", "")
+	v = strings.ReplaceAll(v, "\n", "")
+	return v
 }

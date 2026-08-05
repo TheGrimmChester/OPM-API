@@ -50,6 +50,36 @@ type resolvedAgentBinding struct {
 	// means a job kind was added here without being registered — the drift case,
 	// where a new kind silently inherits another agent's model.
 	AgentKeyKnown bool `json:"agent_key_known"`
+
+	// Candidates is the ordered endpoint list the runner walks: try the first, and
+	// on a retryable failure (429, unreachable, bad key) move to the next. The flat
+	// fields above describe Candidates[0], so a build that ignores this list
+	// behaves exactly as it did before failover existed.
+	Candidates []resolvedEndpointCandidate `json:"candidates"`
+	// Considered/SkippedNoCredential explain the shape of the list. An operator who
+	// registered three endpoints and sees one candidate needs to know whether the
+	// other two were filtered by a constraint or dropped for want of a credential.
+	Considered          int `json:"considered"`
+	SkippedNoCredential int `json:"skipped_no_credential"`
+}
+
+// resolvedEndpointCandidate is one endpoint a job may try, with its own credential.
+type resolvedEndpointCandidate struct {
+	EndpointID string   `json:"endpoint_id"`
+	Label      string   `json:"label"`
+	Kind       string   `json:"kind"`
+	Transport  string   `json:"transport"`
+	Provider   string   `json:"provider"`
+	BaseURL    string   `json:"base_url"`
+	Model      string   `json:"model"`
+	CLICommand string   `json:"cli_command"`
+	CLIArgs    []string `json:"cli_args"`
+	MaxTokens  uint32   `json:"max_tokens"`
+	Timeout    uint32   `json:"timeout_seconds"`
+	APIKey     string   `json:"api_key"`
+	KeyScope   string   `json:"key_scope"`
+	LogicalKey string   `json:"logical_key"`
+	Priority   int32    `json:"priority"`
 }
 
 // modelOverride is a per-task model choice: "plan with the light model, implement
@@ -123,6 +153,13 @@ func resolveAgentFromOAM(ctx context.Context, org, proj, actor, agentKey string,
 	if !out.AgentKeyKnown {
 		log.Printf("oam: agent key %q is not in OPM's published catalog — "+
 			"it resolved against a default binding. Publish it via /api/agents/catalog/publish.", agentKey)
+	}
+	// Worth a line: an operator who registered several endpoints and gets one
+	// candidate is looking at a filtered list, and the reason is here rather than
+	// in the job output.
+	if out.SkippedNoCredential > 0 {
+		log.Printf("oam: agent %q resolved %d of %d endpoints; %d were skipped for want of a credential",
+			agentKey, len(out.Candidates), out.Considered, out.SkippedNoCredential)
 	}
 	return out, nil
 }

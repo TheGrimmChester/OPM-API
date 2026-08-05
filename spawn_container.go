@@ -217,8 +217,9 @@ func writeModelEnvFile(cfg jobModelConfig) (path string, cleanup func(), err err
 	path = f.Name()
 	cleanup = func() { _ = os.Remove(path) }
 
-	// Both names carry the same value: the Cursor CLI reads CURSOR_API_KEY, the
-	// OpenAI path reads OPM_MODEL_API_KEY.
+	// Both names carry the primary candidate's value: the Cursor CLI reads
+	// CURSOR_API_KEY, the OpenAI path reads OPM_MODEL_API_KEY. Kept for a runner
+	// image that predates failover.
 	lines := []string{
 		"OPM_MODEL_API_KEY=" + cfg.APIKey,
 		"CURSOR_API_KEY=" + cfg.APIKey,
@@ -226,6 +227,14 @@ func writeModelEnvFile(cfg jobModelConfig) (path string, cleanup func(), err err
 	for k, v := range modelEnvForJob(cfg) {
 		lines = append(lines, k+"="+v)
 	}
+	// The ordered candidate list, so the runner can fall through to the next
+	// endpoint when one is over quota or unreachable.
+	//
+	// These go in the env FILE, not as -e flags, for the same two reasons the
+	// primary key does: Open-Job-Go's ScrubEnv strips API_KEY from -e, and an
+	// env file does not appear in the process table. Which matters more here —
+	// there are now up to N credentials in this file rather than one.
+	lines = append(lines, candidateEnvLines(cfg)...)
 	// Image-provided, not a credential: where the Cursor binary lives.
 	if v := envOr("OPM_CURSOR_AGENT_BIN", ""); v != "" {
 		lines = append(lines, "OPM_CURSOR_AGENT_BIN="+v)

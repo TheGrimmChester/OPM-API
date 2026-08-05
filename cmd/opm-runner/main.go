@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -60,6 +61,14 @@ type runnerResult struct {
 	Reason string `json:"reason,omitempty"`
 	Action string `json:"action,omitempty"`
 	Model  string `json:"model,omitempty"`
+
+	// Which endpoint actually served this run, and at which position in the
+	// candidate list. After a failover the endpoint that ran is not the one that
+	// was offered first, so recording only the model leaves "why did this cost
+	// what it cost" unanswerable.
+	Endpoint     string `json:"endpoint,omitempty"`
+	EndpointKind string `json:"endpointKind,omitempty"`
+	Attempt      int    `json:"attempt,omitempty"`
 
 	SpecMarkdown string          `json:"specMarkdown,omitempty"`
 	Plan         json.RawMessage `json:"plan,omitempty"`
@@ -126,20 +135,30 @@ func main() {
 	outDir := envOr("OPM_OUT_DIR", "/out")
 	_ = os.MkdirAll(outDir, 0o755)
 
-	key := modelAPIKey()
-	if key == "" {
+	// The ordered endpoint list OAM resolved for this job, or a single candidate
+	// synthesised from the legacy OPM_MODEL*/CURSOR_API_KEY environment when the
+	// control plane did not supply one.
+	cands := loadCandidates()
+	if len(cands) == 0 {
 		emit(outDir, runnerResult{
 			Mode:   "fallback",
-			Reason: "OPM_MODEL_API_KEY/CURSOR_API_KEY not set; control plane will use builtin artifact helpers",
+			Reason: "no model credential resolved; control plane will use builtin artifact helpers",
 			Action: in.Action,
 		})
 		return
 	}
 
 	model := modelForAction(in.Action)
+	// The model comes from the resolved candidate when there is one: OAM resolved
+	// it per agent for the acting user, and modelForAction is the legacy
+	// deployment-wide fallback. Preferring the env here would reintroduce exactly
+	// the global-variable behaviour the binding replaced.
+	if m := strings.TrimSpace(cands[0].Model); m != "" {
+		model = m
+	}
 	system, user := promptsFor(in)
 
-	content, err := callModel(key, model, system, user)
+	content, used, err := callWithFailover(cands, system, user)
 	if err != nil {
 		emit(outDir, runnerResult{
 			Mode:   "fallback",
@@ -149,8 +168,17 @@ func main() {
 		})
 		return
 	}
-
-	emit(outDir, parseModelContent(in.Action, model, content))
+	// Report which endpoint actually served the job, not which one was offered
+	// first. After a failover those differ, and "which model ran this" is
+	// unanswerable otherwise.
+	if m := strings.TrimSpace(used.Model); m != "" {
+		model = m
+	}
+	res := parseModelContent(in.Action, model, content)
+	res.Endpoint = used.name()
+	res.EndpointKind = used.Kind
+	res.Attempt = used.Index
+	emit(outDir, res)
 }
 
 func modelAPIKey() string {
@@ -390,7 +418,6 @@ func modelForAction(action string) string {
 }
 
 // promptsFor lives in prompts.go (per-action system contracts).
-
 
 func callChat(base, key, model, system, user string) (string, error) {
 	body, _ := json.Marshal(chatReq{
@@ -656,6 +683,15 @@ func stripFences(s string) string {
 		s = s[i:]
 	}
 	return strings.TrimSpace(s)
+}
+
+// envInt reads an integer env var, returning def when unset or unparseable.
+func envInt(k string, def int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(k)))
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 func envOr(k, def string) string {
