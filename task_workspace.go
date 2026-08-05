@@ -72,7 +72,7 @@ func cleanupRunnerScratch(runID string) {
 // Autopilot tasks also use the session for review and qa-fix so fixes stay in one tree.
 func usesTaskWorkspace(action string, autopilot bool) bool {
 	switch action {
-	case "run-implementation":
+	case "run-implementation", "run-pipeline":
 		return true
 	case "run-qa-fix":
 		return autopilot
@@ -85,7 +85,7 @@ func usesTaskWorkspace(action string, autopilot bool) bool {
 
 // taskWorkspaceWriteMount is true when the runner may modify files in the session repo.
 func taskWorkspaceWriteMount(action string) bool {
-	return action == "run-implementation" || action == "run-qa-fix"
+	return action == "run-implementation" || action == "run-qa-fix" || action == "run-pipeline"
 }
 
 func hasPendingCodingSubtasks(plan ImplementationPlan) bool {

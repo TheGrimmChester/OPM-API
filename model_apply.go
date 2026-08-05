@@ -139,7 +139,11 @@ func applyModelPlanning(store *Store, j Job, rr RunnerResult) (string, error) {
 }
 
 func applyModelImplementation(store *Store, j Job, rr RunnerResult, taskWorkDir string) (string, error) {
-	msg, err := builtinImplementation(store, j)
+	return applyModelImplementationOpts(store, j, rr, taskWorkDir, false)
+}
+
+func applyModelImplementationOpts(store *Store, j Job, rr RunnerResult, taskWorkDir string, keepRunning bool) (string, error) {
+	msg, err := builtinImplementationOpts(store, j, keepRunning)
 	if err != nil {
 		return msg, err
 	}

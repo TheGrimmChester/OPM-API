@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,7 +94,12 @@ func executeJob(store *Store, j Job) {
 	}
 	var runnerRR RunnerResult
 	var hasRunnerRR bool
-	if preferContainerSpawn() {
+	// run-pipeline manages its own per-step spawns; skip the outer single spawn.
+	if j.Action == "run-pipeline" {
+		j.State = "running"
+		j.Execution = "builtin"
+		j.Message = "Running task pipeline: plan → implement all subtasks → review → deliver…"
+	} else if preferContainerSpawn() {
 		j.State = "running"
 		j.Execution = "container"
 		j.Message = fmt.Sprintf("Spawning runner container (%s) for %s…", nz(j.RunnerImage, runnerImageName()), j.Action)
@@ -170,6 +176,14 @@ func executeJob(store *Store, j Job) {
 			resultMsg, err = builtinReview(store, j)
 		case "run-qa-fix":
 			resultMsg, err = builtinQaFix(store, j)
+		case "run-pipeline":
+			var usedContainer bool
+			resultMsg, usedContainer, err = runPipeline(store, j, workDir, taskSessionDir)
+			if usedContainer {
+				execution = "container"
+			} else {
+				execution = "builtin"
+			}
 		case "recover-subtask":
 			resultMsg, err = builtinRecover(store, j)
 		case "mark-stuck":
@@ -354,6 +368,12 @@ func builtinPlanning(store *Store, j Job) (string, error) {
 }
 
 func builtinImplementation(store *Store, j Job) (string, error) {
+	return builtinImplementationOpts(store, j, false)
+}
+
+// builtinImplementationOpts completes the next pending subtask. When keepRunning
+// is true (run-pipeline drain), progress stays is_running so the UI keeps polling.
+func builtinImplementationOpts(store *Store, j Job, keepRunning bool) (string, error) {
 	if j.SpecID == "" {
 		return "run-implementation requires specId", fmt.Errorf("specId required")
 	}
@@ -408,13 +428,24 @@ doneOne:
 		return "Failed to update plan", err
 	}
 	total, done := countPlanSubtasks(plan)
+	prev, _ := store.GetProgress(j.ProjectID, j.SpecID)
 	prog := TaskProgress{
-		IsRunning:        false,
+		IsRunning:        keepRunning,
+		Paused:           prev.Paused,
+		StuckSubtaskID:   prev.StuckSubtaskID,
 		Action:           j.Action,
 		Progress:         pct(done, total),
 		SubtaskCompleted: done,
 		SubtaskTotal:     total,
 		RunID:            j.RunID,
+	}
+	if keepRunning {
+		start := nowUTC()
+		if prev.StartedAt != nil {
+			prog.StartedAt = prev.StartedAt
+		} else {
+			prog.StartedAt = &start
+		}
 	}
 	if done >= total {
 		prog.CurrentPhaseName = "Complete"
@@ -425,12 +456,11 @@ doneOne:
 	_ = store.PutProgress(j.ProjectID, j.SpecID, prog)
 	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation", fmt.Sprintf("[%s] completed subtask %s (%d/%d)\n", j.RunID, completedID, done, total))
 
-	notePath := ""
 	_ = store.withProject(j.ProjectID, func(p Project) error {
-		notePath = filepath.Join(store.projectDir(p), "specs", j.SpecID, "IMPLEMENTATION_NOTES.md")
-		prev, _ := os.ReadFile(notePath)
+		notePath := filepath.Join(store.projectDir(p), "specs", j.SpecID, "IMPLEMENTATION_NOTES.md")
+		prevNotes, _ := os.ReadFile(notePath)
 		line := fmt.Sprintf("- %s: completed subtask %s (builtin runner)\n", nowUTC().Format(time.RFC3339), completedID)
-		return os.WriteFile(notePath, append(prev, []byte(line)...), 0o644)
+		return os.WriteFile(notePath, append(prevNotes, []byte(line)...), 0o644)
 	})
 
 	if done >= total {
@@ -446,6 +476,373 @@ doneOne:
 // records no change set, so `deliver` will correctly answer no_changes_produced.
 const builtinNoCodeNotice = "No source changes were written: the builtin path tracks plan progress only. " +
 	"Configure a model runner (OPM_MODEL_API_KEY) for the runner to produce file changes to deliver."
+
+// runPipeline runs planning (if needed), drains every pending subtask via
+// implementation steps, then review, then deliver (soft-skip when unconfigured
+// or empty), then moves the task to done — one job, no manual re-enqueue.
+// Auto-approves require-review-before-coding so the pipeline is not blocked.
+// usedContainer is true when at least one per-step runner spawn succeeded.
+func runPipeline(store *Store, j Job, workDir, taskSessionDir string) (msg string, usedContainer bool, err error) {
+	if j.SpecID == "" {
+		return "run-pipeline requires specId", false, fmt.Errorf("specId required")
+	}
+	sessionDir := taskSessionDir
+	if sessionDir == "" {
+		sessionDir = workDir
+	}
+	var steps []string
+	setPipelineProgress := func(action, phase string, running bool) {
+		plan, _ := store.GetPlan(j.ProjectID, j.SpecID)
+		total, done := countPlanSubtasks(plan)
+		prev, _ := store.GetProgress(j.ProjectID, j.SpecID)
+		prog := TaskProgress{
+			IsRunning:        running,
+			Paused:           prev.Paused,
+			StuckSubtaskID:   prev.StuckSubtaskID,
+			Action:           action,
+			Progress:         pct(done, total),
+			SubtaskCompleted: done,
+			SubtaskTotal:     total,
+			CurrentPhaseName: phase,
+			RunID:            j.RunID,
+		}
+		if !running {
+			doneAt := nowUTC()
+			prog.CompletedAt = &doneAt
+		} else if prev.StartedAt != nil {
+			prog.StartedAt = prev.StartedAt
+		} else {
+			start := nowUTC()
+			prog.StartedAt = &start
+		}
+		_ = store.PutProgress(j.ProjectID, j.SpecID, prog)
+	}
+	setPipelineProgress("run-pipeline", "Pipeline", true)
+	defer func() {
+		prog, gerr := store.GetProgress(j.ProjectID, j.SpecID)
+		if gerr == nil && prog.IsRunning {
+			prog.IsRunning = false
+			doneAt := nowUTC()
+			prog.CompletedAt = &doneAt
+			_ = store.PutProgress(j.ProjectID, j.SpecID, prog)
+		}
+	}()
+
+	plan, _ := store.GetPlan(j.ProjectID, j.SpecID)
+	if len(plan.Phases) == 0 {
+		setPipelineProgress("run-planning", "Planning", true)
+		pj := pipelineStepJob(j, "run-planning")
+		stepMsg, spawned, stepErr := pipelinePlanningStep(store, pj, workDir)
+		if spawned {
+			usedContainer = true
+		}
+		steps = append(steps, stepMsg)
+		if stepErr != nil {
+			return "Pipeline failed during planning: " + stepMsg, usedContainer, stepErr
+		}
+		if blocked, bmsg := pipelineCancelledOrPaused(store, j); blocked {
+			return "Pipeline stopped: " + bmsg + " Steps: " + strings.Join(steps, " | "), usedContainer, fmt.Errorf("%s", bmsg)
+		}
+		// Planning may have created the task session; refresh for coding drain.
+		if p, perr := store.GetProject(j.ProjectID); perr == nil {
+			if wd, werr := ensureTaskWorkspace(p, j.SpecID); werr == nil {
+				sessionDir = wd
+				workDir = wd
+			}
+		}
+	}
+
+	task, terr := store.GetTask(j.ProjectID, j.SpecID)
+	if terr != nil {
+		return "Task not found", usedContainer, terr
+	}
+	if task.RequireReviewBeforeCoding && !taskApprovedForCoding(store, j.ProjectID, j.SpecID) {
+		if task.Status == "human_review" {
+			if _, aerr := store.ApproveForCoding(j.ProjectID, j.SpecID); aerr != nil {
+				return "Pipeline failed auto-approving for coding: " + aerr.Error(), usedContainer, aerr
+			}
+			steps = append(steps, "Auto-approved for coding (pipeline)")
+		}
+	}
+
+	plan, _ = store.GetPlan(j.ProjectID, j.SpecID)
+	totalPending := countPendingSubtasks(plan)
+	maxSteps := totalPending + 8
+	if maxSteps < 16 {
+		maxSteps = 16
+	}
+	if maxSteps > 500 {
+		maxSteps = 500
+	}
+
+	for i := 0; i < maxSteps; i++ {
+		if blocked, bmsg := pipelineCancelledOrPaused(store, j); blocked {
+			return "Pipeline stopped: " + bmsg + " Steps: " + strings.Join(steps, " | "), usedContainer, fmt.Errorf("%s", bmsg)
+		}
+		plan, _ = store.GetPlan(j.ProjectID, j.SpecID)
+		if firstPendingSubtaskID(plan) == "" {
+			break
+		}
+		setPipelineProgress("run-implementation", "Implement", true)
+		ij := pipelineStepJob(j, "run-implementation")
+		stepMsg, spawned, stepErr := pipelineImplementationStep(store, ij, sessionDir)
+		if spawned {
+			usedContainer = true
+		}
+		steps = append(steps, stepMsg)
+		if stepErr != nil {
+			return "Pipeline failed during implementation: " + stepMsg, usedContainer, stepErr
+		}
+	}
+
+	plan, _ = store.GetPlan(j.ProjectID, j.SpecID)
+	if pending := firstPendingSubtaskID(plan); pending != "" {
+		msg := fmt.Sprintf("Pipeline stopped: remaining pending subtask %s after drain", pending)
+		steps = append(steps, msg)
+		setPipelineProgress("run-pipeline", "Incomplete", false)
+		return strings.Join(steps, " → "), usedContainer, fmt.Errorf("incomplete drain")
+	}
+
+	if blocked, bmsg := pipelineCancelledOrPaused(store, j); blocked {
+		return "Pipeline stopped: " + bmsg + " Steps: " + strings.Join(steps, " | "), usedContainer, fmt.Errorf("%s", bmsg)
+	}
+
+	setPipelineProgress("run-review", "Review", true)
+	rj := pipelineStepJob(j, "run-review")
+	reviewMsg, spawned, rerr := pipelineReviewStep(store, rj, sessionDir)
+	if spawned {
+		usedContainer = true
+	}
+	steps = append(steps, reviewMsg)
+	if rerr != nil {
+		return "Pipeline failed during review: " + reviewMsg, usedContainer, rerr
+	}
+	cur, _ := store.GetTask(j.ProjectID, j.SpecID)
+	if strings.Contains(reviewMsg, "Review FAIL") || cur.Status == "in_progress" {
+		setPipelineProgress("run-pipeline", "Review failed", false)
+		summary := "Pipeline finished with review FAIL: " + strings.Join(steps, " → ")
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "validation",
+			fmt.Sprintf("[%s] run-pipeline ended with review FAIL\n", j.RunID))
+		return summary, usedContainer, fmt.Errorf("review failed")
+	}
+
+	plan, _ = store.GetPlan(j.ProjectID, j.SpecID)
+	total, done := countPlanSubtasks(plan)
+	if total == 0 || done < total {
+		msg := fmt.Sprintf("refusing deliver: subtasks incomplete (%d/%d)", done, total)
+		steps = append(steps, msg)
+		setPipelineProgress("run-pipeline", "Incomplete", false)
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+			fmt.Sprintf("[%s] run-pipeline refused deliver: %s\n", j.RunID, msg))
+		return "Pipeline stopped: " + strings.Join(steps, " → "), usedContainer, fmt.Errorf("%s", msg)
+	}
+
+	setPipelineProgress("run-pipeline", "Deliver", true)
+	p, perr := store.GetProject(j.ProjectID)
+	if perr != nil {
+		return "Pipeline failed loading project for deliver: " + perr.Error(), usedContainer, perr
+	}
+	dmsg, dstatus, derr := pipelineDeliver(store, j, p, sessionDir)
+	if derr != nil {
+		steps = append(steps, fmt.Sprintf("deliver failed (%s): %s", dstatus, derr.Error()))
+		setPipelineProgress("run-pipeline", "Delivery failed", false)
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+			fmt.Sprintf("[%s] run-pipeline stopped: delivery hard failure status=%s\n", j.RunID, dstatus))
+		return "Pipeline stopped after delivery failure (left in human_review): " + strings.Join(steps, " → "), usedContainer, derr
+	}
+	steps = append(steps, dmsg)
+
+	if _, merr := store.MoveTask(j.ProjectID, j.SpecID, "done"); merr != nil {
+		return "Pipeline delivered but move to done failed: " + merr.Error(), usedContainer, merr
+	}
+	steps = append(steps, "moved to done")
+	releaseTaskWorkspace(j.ProjectID, j.SpecID)
+
+	setPipelineProgress("run-pipeline", "Complete", false)
+	summary := "Pipeline complete: " + strings.Join(steps, " → ")
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+		fmt.Sprintf("[%s] run-pipeline finished → done\n", j.RunID))
+	return summary, usedContainer, nil
+}
+
+func pipelineStepJob(parent Job, action string) Job {
+	step := parent
+	step.Action = action
+	step.AgentKey = agentKeyForAction(action)
+	step.ResolvedAgentKey = ""
+	step.ResolvedModel = ""
+	step.ResolvedModelSource = ""
+	step.ResolvedProvider = ""
+	step.ResolvedKeyScope = ""
+	return step
+}
+
+func taskApprovedForCoding(store *Store, projectID, specID string) bool {
+	approved := false
+	_ = store.withProject(projectID, func(p Project) error {
+		var st map[string]interface{}
+		path := filepath.Join(store.projectDir(p), "specs", specID, "review_state.json")
+		if err := store.readJSON(path, &st); err != nil {
+			return nil
+		}
+		if v, ok := st["approved"].(bool); ok {
+			approved = v
+		}
+		return nil
+	})
+	return approved
+}
+
+func firstPendingSubtaskID(plan ImplementationPlan) string {
+	for _, ph := range plan.Phases {
+		for _, st := range ph.Subtasks {
+			if st.Status == "pending" || st.Status == "" || st.Status == "in_progress" {
+				return st.ID
+			}
+		}
+	}
+	return ""
+}
+
+func countPendingSubtasks(plan ImplementationPlan) int {
+	n := 0
+	for _, ph := range plan.Phases {
+		for _, st := range ph.Subtasks {
+			if st.Status == "pending" || st.Status == "" || st.Status == "in_progress" {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func pipelineCancelledOrPaused(store *Store, j Job) (bool, string) {
+	cur, err := store.GetJob(j.ProjectID, j.RunID)
+	if err == nil && cur.State == "cancelled" {
+		return true, "job cancelled"
+	}
+	prog, err := store.GetProgress(j.ProjectID, j.SpecID)
+	if err == nil && prog.Paused {
+		return true, "task paused"
+	}
+	return false, ""
+}
+
+func pipelinePlanningStep(store *Store, j Job, workDir string) (string, bool, error) {
+	if preferContainerSpawn() && workDir != "" {
+		cout, serr := runTaskContainer(store, j, workDir)
+		if serr == nil && cout.HasResult && cout.Result.Mode == "model" {
+			if handled, msg, aerr := applyRunnerResult(store, j, cout.Result, workDir); handled {
+				return msg, true, aerr
+			}
+		}
+		if serr == nil {
+			msg, err := builtinPlanning(store, j)
+			return msg, true, err
+		}
+	}
+	msg, err := builtinPlanning(store, j)
+	return msg, false, err
+}
+
+func pipelineImplementationStep(store *Store, j Job, workDir string) (string, bool, error) {
+	if preferContainerSpawn() && workDir != "" {
+		cout, serr := runTaskContainer(store, j, workDir)
+		if serr == nil && cout.HasResult && cout.Result.Mode == "model" {
+			msg, aerr := applyModelImplementationOpts(store, j, cout.Result, workDir, true)
+			return msg, true, aerr
+		}
+		if serr == nil {
+			msg, err := builtinImplementationOpts(store, j, true)
+			return msg, true, err
+		}
+	}
+	msg, err := builtinImplementationOpts(store, j, true)
+	return msg, false, err
+}
+
+func pipelineReviewStep(store *Store, j Job, workDir string) (string, bool, error) {
+	if preferContainerSpawn() && workDir != "" {
+		cout, serr := runTaskContainer(store, j, workDir)
+		if serr == nil && cout.HasResult && cout.Result.Mode == "model" {
+			if handled, msg, aerr := applyRunnerResult(store, j, cout.Result, workDir); handled {
+				return msg, true, aerr
+			}
+		}
+		if serr == nil {
+			msg, err := builtinReview(store, j)
+			return msg, true, err
+		}
+	}
+	msg, err := builtinReview(store, j)
+	return msg, false, err
+}
+
+// pipelineDeliver pushes from the task session when possible; soft-skips when
+// delivery is unconfigured or the change set is empty so the pipeline can still
+// reach done.
+func pipelineDeliver(store *Store, j Job, p Project, taskSessionDir string) (msg, status string, err error) {
+	ctx := context.Background()
+	if strings.TrimSpace(p.OwnerRepo) == "" || strings.TrimSpace(p.ConnectorID) == "" || !peerORAConfigured() {
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
+			fmt.Sprintf("[%s] pipeline deliver skipped: unconfigured\n", j.RunID))
+		return "deliver skipped: unconfigured", "skipped_unconfigured", nil
+	}
+	t, terr := store.GetTask(j.ProjectID, j.SpecID)
+	if terr != nil {
+		return "", deliveryStatusTaskNotFound, terr
+	}
+	cs, cerr := store.GetChangeSet(j.ProjectID, j.SpecID)
+	if cerr != nil {
+		return "", deliveryStatusUpstreamError, cerr
+	}
+	if len(cs.Files) == 0 {
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
+			fmt.Sprintf("[%s] pipeline deliver skipped: no_changes_produced\n", j.RunID))
+		_, _ = store.MutateTask(j.ProjectID, j.SpecID, func(task *Task) {
+			task.DeliveryStatus = deliveryStatusNoChanges
+			task.DeliveryError = "nothing to deliver"
+		})
+		return "deliver skipped: no_changes_produced", deliveryStatusNoChanges, nil
+	}
+
+	var res deliveryResult
+	var dstatus string
+	var derr error
+	if taskSessionDir != "" && !workspaceIsStub(taskSessionDir) {
+		res, dstatus, derr = runDeliveryFromWorkspace(ctx, p, t, taskSessionDir, cs, "", "", false)
+	} else {
+		res, dstatus, derr = runDelivery(ctx, store, p, t, cs, "", "", false)
+	}
+	if derr != nil {
+		_, _ = store.MutateTask(j.ProjectID, j.SpecID, func(task *Task) {
+			task.DeliveryStatus = dstatus
+			task.DeliveryError = derr.Error()
+		})
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
+			fmt.Sprintf("[%s] pipeline deliver FAILED status=%s: %v\n", j.RunID, dstatus, derr))
+		_, _ = store.MoveTask(j.ProjectID, j.SpecID, "human_review")
+		return "", dstatus, derr
+	}
+
+	now := nowUTC()
+	_, _ = store.MutateTask(j.ProjectID, j.SpecID, func(task *Task) {
+		task.DeliveryBranch = res.Branch
+		task.DeliveryCommitSha = res.CommitSha
+		task.DeliveryFiles = res.Files
+		task.DeliveredAt = &now
+		task.PRNumber = res.PRNumber
+		task.PRURL = res.PRURL
+		task.PRState = res.PRState
+		task.DeliveryStatus = deliveryStatusDelivered
+		task.DeliveryError = ""
+	})
+	_ = store.ClearChangeSet(j.ProjectID, j.SpecID)
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
+		fmt.Sprintf("[%s] pipeline deliver OK branch=%s commit=%s pr=#%d\n",
+			j.RunID, res.Branch, shortSha(res.CommitSha), res.PRNumber))
+	return fmt.Sprintf("delivered PR #%d", res.PRNumber), deliveryStatusDelivered, nil
+}
 
 func builtinReview(store *Store, j Job) (string, error) {
 	if j.SpecID == "" {
@@ -689,7 +1086,7 @@ func markJobCancelledStuck(store *Store, j Job) {
 		return
 	}
 	switch j.Action {
-	case "run-implementation", "run-planning", "run-followup-planning", "run-review", "run-qa-fix":
+	case "run-implementation", "run-planning", "run-followup-planning", "run-review", "run-qa-fix", "run-pipeline":
 	default:
 		return
 	}

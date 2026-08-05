@@ -313,3 +313,54 @@ func TestBuiltinRoadmapIdeationAndSkip(t *testing.T) {
 	}
 }
 
+func TestRunPipelineEndToEnd(t *testing.T) {
+	t.Setenv("OPM_FORCE_BUILTIN", "1")
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.CreateProject(Project{
+		Name: "Pipeline", OwnerRepo: "acme/demo", ConnectorID: "c1", OrganizationID: "default-org",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.InitProject(p.ID)
+	task, err := store.CreateTask(p.ID, "Pipeline feature", "Drain all subtasks in one job", false, false, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions, err := store.GetTaskValidActions(p.ID, task.SpecID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !actions.Pipeline {
+		t.Fatalf("expected pipeline action in backlog, got %+v", actions)
+	}
+
+	j, err := store.CreateJob(p.ID, "run-pipeline", task.SpecID, "opm-runner-task:nas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executeJob(store, j)
+	j, _ = store.GetJob(p.ID, j.RunID)
+	if j.State != "completed" {
+		t.Fatalf("pipeline job=%+v", j)
+	}
+	if !strings.Contains(j.Message, "Pipeline complete") || !strings.Contains(j.Message, "PASS") {
+		t.Fatalf("want Pipeline complete with PASS, got %q", j.Message)
+	}
+	cur, _ := store.GetTask(p.ID, task.SpecID)
+	if cur.Status != "done" {
+		t.Fatalf("want done after pipeline, got %s", cur.Status)
+	}
+	plan, _ := store.GetPlan(p.ID, task.SpecID)
+	if pending := firstPendingSubtaskID(plan); pending != "" {
+		t.Fatalf("pending subtask left: %s", pending)
+	}
+	prog, _ := store.GetProgress(p.ID, task.SpecID)
+	if prog.IsRunning {
+		t.Fatal("expected is_running false after pipeline")
+	}
+}
+
