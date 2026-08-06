@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	openauth "github.com/TheGrimmChester/open-auth-go"
 	opentenant "github.com/TheGrimmChester/open-tenant-go"
 )
 
@@ -16,7 +17,12 @@ func initTenantAuth() {
 // resolveRequestOrg returns the organization this request may access.
 // When auth is enforced, empty/"all" collapse to default-org (WriteTenant).
 // When auth is off, empty/"all" mean unscoped ("").
+// Prefer JWT org_id for organization accounts so jobs are not stamped from
+// headers alone.
 func resolveRequestOrg(r *http.Request) string {
+	if org := jobOrgFromJWT(r); org != "" {
+		return org
+	}
 	ctx := opentenant.FromRequest(r)
 	if ctx.OrganizationID == "" {
 		if q := strings.TrimSpace(r.URL.Query().Get("organizationId")); q != "" {
@@ -33,6 +39,23 @@ func resolveRequestOrg(r *http.Request) string {
 		return ""
 	}
 	return ctx.OrganizationID
+}
+
+// jobOrgFromJWT reads the acting user's home organization from validated JWT
+// claims. Personal accounts return default-org for storage; organization accounts
+// return the fixed JWT org_id. Unbound legacy admins fall back to headers.
+func jobOrgFromJWT(r *http.Request) string {
+	claims := claimsFromRequestToken(r)
+	if claims == nil {
+		return ""
+	}
+	if openauth.IsPersonalAccount(claims) {
+		return opentenant.DefaultOrganizationID
+	}
+	if org := strings.TrimSpace(claims.OrgID); org != "" {
+		return org
+	}
+	return ""
 }
 
 func projectOrgID(p Project) string {
