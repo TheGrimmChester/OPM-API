@@ -28,12 +28,23 @@ func handleHubStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 405, "method not allowed")
 		return
 	}
+	credHome := "env"
+	note := "OPM links to OPA-Hub for identity/orgs when PEER_OPA_URL is set. No local folder projects."
+	switch {
+	case oamConfigured():
+		credHome = "oam"
+		note = "OPM links to OPA-Hub for identity/orgs, OAM for connector/credential storage and model bindings, and ORA for GitHub SCM protocol (list/clone/PR). No local folder projects."
+	case peerORAConfigured():
+		credHome = "ora"
+		note = "OPM links to ORA for GitHub SCM protocol (list/clone/PR). Set PEER_OAM_URL so connector/credential storage and model bindings resolve from OAM. No local folder projects."
+	}
 	out := map[string]interface{}{
 		"peer_opa_configured": peerOPAConfigured(),
 		"peer_ora_configured": peerORAConfigured(),
-		"credentials_home":    "ora",
+		"peer_oam_configured": oamConfigured(),
+		"credentials_home":    credHome,
 		"hub_role":            "identity_and_tenancy",
-		"note":                "OPM links to OPA-Hub for identity/orgs and to ORA for GitHub App/PAT connectors. No local folder projects.",
+		"note":                note,
 	}
 	if peerOPAConfigured() {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -77,7 +88,7 @@ func handleGitHubConnectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !peerORAConfigured() {
-		writeError(w, 503, "PEER_ORA_URL not configured — GitHub connectors live in ORA")
+		writeError(w, 503, "PEER_ORA_URL not configured — list connectors via ORA peer API (storage is OAM when PEER_OAM_URL is set)")
 		return
 	}
 	orgID := resolveRequestOrg(r)

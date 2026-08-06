@@ -223,10 +223,10 @@ type Job struct {
 	// IdeationType optionally scopes run-ideation to one IdeationTypes key.
 	IdeationType string `json:"ideationType,omitempty"`
 
-	// Competitors and AudienceNotes are the roadmap pipeline's inputs, carried
-	// from ORA's /api/scm/roadmap/generate request. They are per-run rather than
-	// per-project: which competitors matter is a question you answer differently
-	// each time you re-run discovery.
+	// Competitors and AudienceNotes are OPM roadmap-pipeline inputs (historically
+	// shaped like ORA's old /api/scm/roadmap/generate). They are per-run rather
+	// than per-project: which competitors matter is a question you answer
+	// differently each time you re-run discovery.
 	Competitors   []string `json:"competitors,omitempty"`
 	AudienceNotes string   `json:"audienceNotes,omitempty"`
 

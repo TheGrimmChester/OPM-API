@@ -18,12 +18,13 @@ Task-automation runners must not receive `JWT_SECRET`, service JWTs, or connecto
 
 ## Secrets on disk
 
-OPM does not store GitHub App private keys or PATs. Those live in ORA connectors. Board/task JSON under `OPM_DATA_DIR` must not contain clone tokens. Ephemeral job credentials are request-scoped and discarded with the tmp workspace.
+OPM does not store GitHub App private keys or PATs. Those live in **OAM** (account plane); ORA issues short-lived SCM credentials from that store. Board/task JSON under `OPM_DATA_DIR` must not contain clone tokens. Ephemeral job credentials are request-scoped and discarded with the tmp workspace.
 
 ## Code delivery credentials
 
 A delivery pushes a branch and opens a pull request, so it needs write authority
-that a read-only clone credential does not carry. All of it stays in ORA:
+that a read-only clone credential does not carry. Protocol stays in **ORA**
+(credentials are stored in **OAM**):
 
 - OPM requests a short-lived **Contents-write** credential from ORA
   (`POST /api/peer/scm/push-credentials`, service JWT scope **`scm:pr`**) for

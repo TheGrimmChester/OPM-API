@@ -41,8 +41,8 @@ func chainJobAsync(store *Store, j Job, action string) (Job, error) {
 }
 
 // enqueuePipelineJob starts run-pipeline for a newly created backlog task
-// (plan → all subtasks → review → deliver → done). PR opens only after every
-// coding subtask is complete.
+// (plan → all subtasks → review → deliver → done). PR opens only after review
+// PASS and every coding subtask is complete.
 func enqueuePipelineJob(store *Store, projectID, specID string, origin JobOrigin) error {
 	j, err := store.CreateJobWithOrigin(projectID, "run-pipeline", specID, runnerImageName(), origin)
 	if err != nil {
@@ -61,8 +61,8 @@ func enqueuePipelineJob(store *Store, projectID, specID string, origin JobOrigin
 }
 
 // postPlanningJob continues after planning: auto-approves require-review-before-coding
-// when needed, then chains run-implementation. PR open still waits until all coding
-// subtasks complete (postImplementationJob / autoDeliverTaskSession).
+// when needed, then chains run-implementation. PR open waits until review PASS
+// (postReviewJob / deliverTaskPR).
 func postPlanningJob(store *Store, j Job) (string, error) {
 	if j.SpecID == "" {
 		return "", nil
@@ -94,8 +94,9 @@ func postPlanningJob(store *Store, j Job) (string, error) {
 	return fmt.Sprintf("Planning complete — chained run-implementation (job %s).", next.RunID), nil
 }
 
-// postReviewJob continues autopilot after run-review completes successfully.
-func postReviewJob(store *Store, j Job, p Project, reviewPassed bool) (string, error) {
+// postReviewJob continues after run-review: on PASS, gate on plan completeness,
+// auto-deliver (open PR) when enabled, then stop at human_review or merge/done.
+func postReviewJob(store *Store, j Job, p Project, taskSessionDir string, reviewPassed bool) (string, error) {
 	if j.SpecID == "" {
 		return "", nil
 	}
@@ -116,10 +117,49 @@ func postReviewJob(store *Store, j Job, p Project, reviewPassed bool) (string, e
 		}
 		return fmt.Sprintf("Review FAIL — chained run-qa-fix (job %s).", next.RunID), nil
 	}
-	if humanReviewRequired(t) {
-		return "Review PASS — waiting for human approval in human_review.", nil
+
+	plan, perr := store.GetPlan(j.ProjectID, j.SpecID)
+	if perr != nil {
+		return "", perr
 	}
-	return autopilotMergeAndComplete(store, j, p, t)
+	total, done := countPlanSubtasks(plan)
+	if total == 0 || done < total {
+		msg := fmt.Sprintf("Review PASS — refusing deliver: subtasks incomplete (%d/%d).", done, total)
+		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
+			fmt.Sprintf("[%s] %s\n", j.RunID, msg))
+		return msg, nil
+	}
+
+	parts := []string{"Review PASS"}
+	if implAutoDeliverEnabled() && t.PRNumber <= 0 {
+		dmsg, dstatus, derr := deliverTaskPR(store, j, p, taskSessionDir)
+		if derr != nil {
+			_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
+				fmt.Sprintf("[%s] post-review deliver failed (%s): %v\n", j.RunID, dstatus, derr))
+			return fmt.Sprintf("Review PASS — deliver failed (%s): %v. Left where review placed the task; workspace retained.", dstatus, derr), nil
+		}
+		if dmsg != "" {
+			parts = append(parts, dmsg)
+		}
+		if refreshed, gerr := store.GetTask(j.ProjectID, j.SpecID); gerr == nil {
+			t = refreshed
+		}
+	} else if !implAutoDeliverEnabled() {
+		parts = append(parts, "auto-deliver disabled")
+	}
+
+	if humanReviewRequired(t) {
+		releaseTaskWorkspace(j.ProjectID, j.SpecID)
+		return strings.Join(parts, " — ") + " — waiting for human approval in human_review.", nil
+	}
+	extra, err := autopilotMergeAndComplete(store, j, p, t)
+	if err != nil {
+		return strings.Join(parts, " — "), err
+	}
+	if extra != "" {
+		parts = append(parts, strings.TrimPrefix(extra, "Review PASS — "))
+	}
+	return strings.Join(parts, " — "), nil
 }
 
 // postQaFixJob chains the next autopilot step after qa-fix.
@@ -182,15 +222,16 @@ func autopilotMergeAndComplete(store *Store, j Job, p Project, t Task) (string, 
 	return finishDone(fmt.Sprintf("merged PR #%d", t.PRNumber))
 }
 
-func chainReviewAfterDeliver(store *Store, j Job) (string, error) {
+// chainReview enqueues run-review after coding (or when auto-chain is on).
+func chainReview(store *Store, j Job) (string, error) {
 	if !implAutoChainEnabled() {
-		return "Enqueue run-review when ready.", nil
+		return "All coding subtasks complete — enqueue run-review when ready.", nil
 	}
 	next, err := chainJobAsync(store, j, "run-review")
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Chained run-review (job %s).", next.RunID), nil
+	return fmt.Sprintf("All coding subtasks complete — chained run-review (job %s).", next.RunID), nil
 }
 
 // lastReviewPassed inspects task status / plan to infer whether the just-finished review job passed.

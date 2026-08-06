@@ -1,14 +1,15 @@
-# GitHub connector setup (hub + ORA)
+# GitHub connector setup (hub + OAM + ORA)
 
-OPM links **GitHub repositories** discovered through **OPA-Hub** (identity/orgs) and **ORA** (connectors). OPM never stores GitHub App keys or PATs.
+OPM links **GitHub repositories** discovered through **OPA-Hub** (identity/orgs), **OAM** (connector/credential storage), and **ORA** (GitHub App / PAT protocol). OPM never stores GitHub App keys or PATs.
 
 ## Prerequisites
 
 | Component | Requirement |
 |-----------|-------------|
 | **OPA-Hub** | Running; user login issues JWTs (`AUTH_MODE=codeployed` on OPM) |
-| **ORA-API** | GitHub App or PAT connectors configured |
-| **OPM-API** | `PEER_OPA_URL` and `PEER_ORA_URL` set in compose |
+| **OAM** | Account plane for connector storage and AI credentials (`PEER_OAM_URL` on OPM in family stacks) |
+| **ORA-API** | GitHub App or PAT protocol configured; lists connectors / issues clone+PR credentials |
+| **OPM-API** | `PEER_OPA_URL`, `PEER_ORA_URL`, and (recommended) `PEER_OAM_URL` set in compose |
 | **OPM-Dashboard** | Browser UI on `:8098`; login via `/hub-auth` in co-deployed mode |
 
 Verify peers from an authenticated session:
@@ -19,6 +20,8 @@ curl -H "Authorization: Bearer $TOKEN" http://<host>:8098/api/hub/organizations
 curl -H "Authorization: Bearer $TOKEN" "http://<host>:8098/api/github/connectors?organizationId=default-org"
 ```
 
+`GET /api/hub/status` reports `credentials_home: "oam"` when `PEER_OAM_URL` is set; otherwise `ora` (ORA peer only) or `env`.
+
 ## 1. Configure GitHub App on ORA
 
 On `ora-api`, set (see [configuration.md](configuration.md)):
@@ -27,25 +30,28 @@ On `ora-api`, set (see [configuration.md](configuration.md)):
 - `OPA_GITHUB_APP_SLUG`
 - `OPA_GITHUB_APP_PRIVATE_KEY`
 - `OPA_GITHUB_WEBHOOK_SECRET`
-- `OPA_CONNECTOR_SECRET` (for encrypted PAT storage)
+- `OPA_CONNECTOR_SECRET` (AES-GCM; must match `OAM_SECRET_KEY` when OAM holds ciphertext)
 - `OPA_PUBLIC_URL` / `ORA_PUBLIC_URL` (OAuth callback and webhooks)
 
-Install the GitHub App on the org or account whose repos OPM should link.
+Install the GitHub App on the org or account whose repos OPM should link. Manage connector records and AI provider keys in **OAM** when co-deployed.
 
 ## 2. Wire OPM peers
 
-In the family stack compose (e.g. `OPA-Stack/compose.opm.yaml`):
+In the family stack compose (e.g. `OPA-Stack/compose.opm.yaml` or `compose.nas.yaml`):
 
 ```yaml
 opm-api:
   environment:
     PEER_OPA_URL: http://hub:8080
+    PEER_OAM_URL: http://oam-api:8090
     PEER_ORA_URL: http://ora-api:8091
     AUTH_MODE: codeployed
     JWT_SECRET: ${JWT_SECRET}   # shared with hub
     OPA_AUTH_REQUIRED: "true"
     OPM_RUNNER_TAG: nas         # production / NAS only
 ```
+
+With `PEER_OAM_URL` set, configure models and API keys in the OAM console — do not rely on `OPM_MODEL_API_KEY` (legacy rollback only).
 
 Rebuild with production tags (`opm-api:nas`, `opm-dashboard:nas`) — never smoke tags on NAS.
 
@@ -184,7 +190,8 @@ supported path for delivery.
 ## 6. Deliver a task as a pull request
 
 Once an implementation run has recorded file changes (which requires a model
-runner — see `OPM_MODEL_API_KEY` in [configuration.md](configuration.md)), the
+runner — via OAM resolve when `PEER_OAM_URL` is set, or legacy `OPM_MODEL_API_KEY`
+in [configuration.md](configuration.md)), the
 task detail **Delivery** section lists them and offers **Deliver as pull
 request**. That commits them on `opm/<specId>`, pushes the branch, and opens a
 pull request; the board then shows a **PR #n** badge on the card.
@@ -212,7 +219,7 @@ organization's settings. The live board update can only be proved after that is 
 | `missing_issues_permission` on issue link/push/pull | App lacks Issues write | Grant **Issues** read/write and re-accept the install; response lists `missing` |
 | `issue_not_found` on pull | Issue deleted or transferred | Unlink and attach the new number; the link is kept until you do |
 | Task shows a sync error badge | Last push/pull failed | Read `githubIssueSyncError` on the task or the `github-issue-sync` spec log |
-| `no_changes_produced` on deliver | No run recorded file changes (builtin path, or the model returned none) | Set `OPM_MODEL_API_KEY` and re-run implementation; check the task's `delivery` log |
+| `no_changes_produced` on deliver | No run recorded file changes (builtin path, or the model returned none) | Configure OAM credentials (or legacy `OPM_MODEL_API_KEY`) and re-run implementation; check the task's `delivery` log |
 | `missing_contents_permission` on deliver | App cannot push | Grant **Contents: Read and write**, re-accept the installation permissions |
 | `missing_pull_requests_permission` on deliver | App cannot open pull requests | Grant **Pull requests: Read and write**, re-accept the installation permissions |
 | `push_rejected` on deliver | The delivery branch already exists on the remote with different commits | Re-deliver with a different `branch` in the request body |

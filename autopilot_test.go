@@ -24,8 +24,8 @@ func TestUsesTaskWorkspaceAutopilot(t *testing.T) {
 	if !usesTaskWorkspace("run-implementation", false) {
 		t.Fatal("implementation always uses task workspace")
 	}
-	if usesTaskWorkspace("run-review", false) {
-		t.Fatal("review with human gate should not use task workspace")
+	if !usesTaskWorkspace("run-review", false) {
+		t.Fatal("review keeps task workspace so post-review can deliver")
 	}
 	if !usesTaskWorkspace("run-review", true) {
 		t.Fatal("autopilot review should use task workspace")
@@ -209,4 +209,192 @@ func TestCreateTaskHTTPEnqueuesPlanning(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("expected auto-enqueued run-pipeline")
+}
+
+func drainCodingSubtasks(t *testing.T, store *Store, projectID, specID string) Job {
+	t.Helper()
+	var last Job
+	for i := 0; i < 12; i++ {
+		ij, err := store.CreateJob(projectID, "run-implementation", specID, "opm-runner-task:nas")
+		if err != nil {
+			t.Fatal(err)
+		}
+		executeJob(store, ij)
+		last, _ = store.GetJob(projectID, ij.RunID)
+		plan, _ := store.GetPlan(projectID, specID)
+		if allCodingSubtasksComplete(plan) {
+			return last
+		}
+	}
+	t.Fatal("coding subtasks did not complete")
+	return Job{}
+}
+
+// drainUntilPlanComplete finishes remaining non-coding plan rows (builtin review
+// phase) so builtinReview can PASS. Call after drainCodingSubtasks.
+func drainUntilPlanComplete(t *testing.T, store *Store, projectID, specID string) {
+	t.Helper()
+	for i := 0; i < 8; i++ {
+		plan, _ := store.GetPlan(projectID, specID)
+		total, done := countPlanSubtasks(plan)
+		if total > 0 && done >= total {
+			return
+		}
+		ij, err := store.CreateJob(projectID, "run-implementation", specID, "opm-runner-task:nas")
+		if err != nil {
+			t.Fatal(err)
+		}
+		executeJob(store, ij)
+	}
+	t.Fatal("plan did not reach full completion")
+}
+
+func TestCodingCompleteDoesNotOpenPR(t *testing.T) {
+	t.Setenv("OPM_FORCE_BUILTIN", "1")
+	t.Setenv("OPM_IMPL_AUTO_CHAIN", "0")
+	t.Setenv("OPM_IMPL_AUTO_DELIVER", "1")
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.CreateProject(Project{OwnerRepo: "acme/x", ConnectorID: "c", OrganizationID: "default-org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.InitProject(p.ID)
+	task, err := store.CreateTask(p.ID, "Gate", "d", false, true, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pj, _ := store.CreateJob(p.ID, "run-planning", task.SpecID, "opm-runner-task:nas")
+	executeJob(store, pj)
+	last := drainCodingSubtasks(t, store, p.ID, task.SpecID)
+	if !strings.Contains(last.Message, "enqueue run-review") {
+		t.Fatalf("expected chain-off message pointing at review, got %q", last.Message)
+	}
+	if strings.Contains(last.Message, "delivered") || strings.Contains(last.Message, "auto-deliver") {
+		t.Fatalf("coding must not deliver: %q", last.Message)
+	}
+	cur, _ := store.GetTask(p.ID, task.SpecID)
+	if cur.PRNumber != 0 {
+		t.Fatalf("PR must not open before review, got #%d", cur.PRNumber)
+	}
+	if cur.DeliveryStatus == deliveryStatusDelivered {
+		t.Fatal("deliveryStatus=delivered must not be set before review")
+	}
+}
+
+func TestReviewPassSoftDeliversThenHumanGate(t *testing.T) {
+	t.Setenv("OPM_FORCE_BUILTIN", "1")
+	t.Setenv("OPM_IMPL_AUTO_CHAIN", "0")
+	t.Setenv("OPM_IMPL_AUTO_DELIVER", "1")
+	t.Setenv("PEER_ORA_URL", "")
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.CreateProject(Project{OwnerRepo: "acme/x", ConnectorID: "c", OrganizationID: "default-org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.InitProject(p.ID)
+	task, err := store.CreateTask(p.ID, "Gate", "d", false, true, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pj, _ := store.CreateJob(p.ID, "run-planning", task.SpecID, "opm-runner-task:nas")
+	executeJob(store, pj)
+	_ = drainCodingSubtasks(t, store, p.ID, task.SpecID)
+	if cur, _ := store.GetTask(p.ID, task.SpecID); cur.PRNumber != 0 || cur.DeliveryStatus == deliveryStatusDelivered {
+		t.Fatalf("PR must not open at coding-complete: pr=%d status=%q", cur.PRNumber, cur.DeliveryStatus)
+	}
+	drainUntilPlanComplete(t, store, p.ID, task.SpecID)
+	if cur, _ := store.GetTask(p.ID, task.SpecID); cur.PRNumber != 0 || cur.DeliveryStatus == deliveryStatusDelivered {
+		t.Fatalf("PR must not open before review: pr=%d status=%q", cur.PRNumber, cur.DeliveryStatus)
+	}
+	rj, _ := store.CreateJob(p.ID, "run-review", task.SpecID, "opm-runner-task:nas")
+	executeJob(store, rj)
+	rj, _ = store.GetJob(p.ID, rj.RunID)
+	if !strings.Contains(rj.Message, "deliver skipped") {
+		t.Fatalf("review PASS should attempt deliver, message=%q", rj.Message)
+	}
+	cur, _ := store.GetTask(p.ID, task.SpecID)
+	if cur.PRNumber != 0 {
+		t.Fatalf("soft-skip must not invent a PR, got #%d", cur.PRNumber)
+	}
+	if cur.DeliveryStatus == deliveryStatusDelivered {
+		t.Fatal("soft-skip must not mark delivered")
+	}
+	if cur.Status != "human_review" {
+		t.Fatalf("want human_review got %s", cur.Status)
+	}
+}
+
+func TestReviewFailDoesNotDeliver(t *testing.T) {
+	t.Setenv("OPM_FORCE_BUILTIN", "1")
+	t.Setenv("OPM_IMPL_AUTO_CHAIN", "0")
+	t.Setenv("OPM_IMPL_AUTO_DELIVER", "1")
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.CreateProject(Project{OwnerRepo: "acme/x", ConnectorID: "c", OrganizationID: "default-org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.InitProject(p.ID)
+	task, err := store.CreateTask(p.ID, "Fail", "d", false, false, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No plan / incomplete — review FAILs.
+	rj, _ := store.CreateJob(p.ID, "run-review", task.SpecID, "opm-runner-task:nas")
+	executeJob(store, rj)
+	rj, _ = store.GetJob(p.ID, rj.RunID)
+	if strings.Contains(rj.Message, "deliver") && !strings.Contains(rj.Message, "Review FAIL") {
+		t.Fatalf("FAIL path must not deliver: %q", rj.Message)
+	}
+	cur, _ := store.GetTask(p.ID, task.SpecID)
+	if cur.PRNumber != 0 || cur.DeliveryStatus == deliveryStatusDelivered {
+		t.Fatalf("review FAIL must not deliver: pr=%d status=%q", cur.PRNumber, cur.DeliveryStatus)
+	}
+}
+
+func TestPostReviewRefusesDeliverWhenIncomplete(t *testing.T) {
+	t.Setenv("OPM_IMPL_AUTO_DELIVER", "1")
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.CreateProject(Project{OwnerRepo: "acme/x", ConnectorID: "c", OrganizationID: "default-org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.InitProject(p.ID)
+	task, err := store.CreateTask(p.ID, "Incomplete", "d", false, false, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.PutPlan(p.ID, task.SpecID, ImplementationPlan{
+		Phases: []PlanPhase{
+			{Type: "coding", Name: "Code", Subtasks: []PlanSubtask{
+				{ID: "1.1", Description: "todo", Status: "pending"},
+			}},
+		},
+	})
+	j := Job{ProjectID: p.ID, SpecID: task.SpecID, RunID: "run-incomplete-gate", Action: "run-review"}
+	msg, err := postReviewJob(store, j, p, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "refusing deliver") {
+		t.Fatalf("expected incomplete gate, got %q", msg)
+	}
+	cur, _ := store.GetTask(p.ID, task.SpecID)
+	if cur.PRNumber != 0 || cur.DeliveryStatus == deliveryStatusDelivered {
+		t.Fatalf("incomplete plan must not deliver: pr=%d status=%q", cur.PRNumber, cur.DeliveryStatus)
+	}
+	if cur.Status == "done" {
+		t.Fatal("incomplete plan must not move to done")
+	}
 }

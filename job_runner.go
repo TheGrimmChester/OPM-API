@@ -61,9 +61,6 @@ func executeJob(store *Store, j Job) {
 		}
 		workDir, werr = ensureTaskWorkspace(p, j.SpecID)
 		taskSessionDir = workDir
-	case j.Action == "run-review" && j.SpecID != "" && !autopilot:
-		releaseTaskWorkspace(j.ProjectID, j.SpecID)
-		workDir, werr = prepareJobWorkspace(p, j.RunID)
 	default:
 		workDir, werr = prepareJobWorkspace(p, j.RunID)
 	}
@@ -231,7 +228,7 @@ func executeJob(store *Store, j Job) {
 		return
 	}
 	if origAction == "run-implementation" && j.SpecID != "" {
-		if extra, perr := postImplementationJob(store, j, p, taskSessionDir); perr != nil {
+		if extra, perr := postImplementationJob(store, j); perr != nil {
 			resultMsg += fmt.Sprintf(" Post-implementation: %v.", perr)
 		} else if extra != "" {
 			resultMsg += " " + extra
@@ -246,7 +243,7 @@ func executeJob(store *Store, j Job) {
 	}
 	if origAction == "run-review" && j.SpecID != "" {
 		passed := lastReviewPassed(store, j)
-		if extra, perr := postReviewJob(store, j, p, passed); perr != nil {
+		if extra, perr := postReviewJob(store, j, p, taskSessionDir, passed); perr != nil {
 			resultMsg += fmt.Sprintf(" Post-review: %v.", perr)
 		} else if extra != "" {
 			resultMsg += " " + extra
@@ -787,14 +784,15 @@ func pipelineReviewStep(store *Store, j Job, workDir string) (string, bool, erro
 	return msg, false, err
 }
 
-// pipelineDeliver pushes from the task session when possible; soft-skips when
-// delivery is unconfigured or the change set is empty so the pipeline can still
-// reach done.
-func pipelineDeliver(store *Store, j Job, p Project, taskSessionDir string) (msg, status string, err error) {
+// deliverTaskPR commits/pushes/opens a PR from the task session when possible,
+// otherwise from the change set. Soft-skips (nil err) when unconfigured or the
+// change set is empty. Hard failures persist deliveryStatus/Error and return
+// err; they do not move board columns (callers decide).
+func deliverTaskPR(store *Store, j Job, p Project, taskSessionDir string) (msg, status string, err error) {
 	ctx := context.Background()
 	if strings.TrimSpace(p.OwnerRepo) == "" || strings.TrimSpace(p.ConnectorID) == "" || !peerORAConfigured() {
 		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
-			fmt.Sprintf("[%s] pipeline deliver skipped: unconfigured\n", j.RunID))
+			fmt.Sprintf("[%s] deliver skipped: unconfigured\n", j.RunID))
 		return "deliver skipped: unconfigured", "skipped_unconfigured", nil
 	}
 	t, terr := store.GetTask(j.ProjectID, j.SpecID)
@@ -807,7 +805,7 @@ func pipelineDeliver(store *Store, j Job, p Project, taskSessionDir string) (msg
 	}
 	if len(cs.Files) == 0 {
 		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
-			fmt.Sprintf("[%s] pipeline deliver skipped: no_changes_produced\n", j.RunID))
+			fmt.Sprintf("[%s] deliver skipped: no_changes_produced\n", j.RunID))
 		_, _ = store.MutateTask(j.ProjectID, j.SpecID, func(task *Task) {
 			task.DeliveryStatus = deliveryStatusNoChanges
 			task.DeliveryError = "nothing to deliver"
@@ -829,8 +827,7 @@ func pipelineDeliver(store *Store, j Job, p Project, taskSessionDir string) (msg
 			task.DeliveryError = derr.Error()
 		})
 		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
-			fmt.Sprintf("[%s] pipeline deliver FAILED status=%s: %v\n", j.RunID, dstatus, derr))
-		_, _ = store.MoveTask(j.ProjectID, j.SpecID, "human_review")
+			fmt.Sprintf("[%s] deliver FAILED status=%s: %v\n", j.RunID, dstatus, derr))
 		return "", dstatus, derr
 	}
 
@@ -848,9 +845,20 @@ func pipelineDeliver(store *Store, j Job, p Project, taskSessionDir string) (msg
 	})
 	_ = store.ClearChangeSet(j.ProjectID, j.SpecID)
 	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
-		fmt.Sprintf("[%s] pipeline deliver OK branch=%s commit=%s pr=#%d\n",
+		fmt.Sprintf("[%s] deliver OK branch=%s commit=%s pr=#%d\n",
 			j.RunID, res.Branch, shortSha(res.CommitSha), res.PRNumber))
 	return fmt.Sprintf("delivered PR #%d", res.PRNumber), deliveryStatusDelivered, nil
+}
+
+// pipelineDeliver wraps deliverTaskPR; on hard failure moves the task to
+// human_review so the pipeline does not proceed to done.
+func pipelineDeliver(store *Store, j Job, p Project, taskSessionDir string) (msg, status string, err error) {
+	msg, status, err = deliverTaskPR(store, j, p, taskSessionDir)
+	if err != nil {
+		_, _ = store.MoveTask(j.ProjectID, j.SpecID, "human_review")
+		return "", status, err
+	}
+	return msg, status, nil
 }
 
 func builtinReview(store *Store, j Job) (string, error) {

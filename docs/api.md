@@ -11,12 +11,12 @@ When auth is required (NAS), send `Authorization: Bearer <hub-jwt>` plus **`X-Or
 
 ## Hub and GitHub discovery
 
-- `GET /api/hub/status` → hub/ORA linkage summary (`credentials_home: ora`)
+- `GET /api/hub/status` → hub / OAM / ORA linkage (`credentials_home` is `oam` when `PEER_OAM_URL` is set, else `ora` / `env`; plus `peer_oam_configured`, …)
 - `GET /api/hub/organizations` → organizations from OPA-Hub (falls back to `default-org`)
-- `GET /api/github/connectors?organizationId=` → proxies ORA connector list
+- `GET /api/github/connectors?organizationId=` → proxies ORA connector list (storage in OAM)
 - `GET /api/github/connectors/{id}/repos?organizationId=` → proxies installable GitHub repos
 
-Requires `PEER_OPA_URL` / `PEER_ORA_URL` as documented in [interop.md](interop.md).
+Requires `PEER_OPA_URL` / `PEER_ORA_URL` (and `PEER_OAM_URL` for per-job models/keys) as documented in [interop.md](interop.md).
 
 ## Projects (GitHub repos)
 
@@ -32,7 +32,7 @@ Local folder / `path` create payloads are rejected.
 
 ## GitHub Milestones and Projects (via ORA)
 
-Credentials stay in **ORA**. OPM calls peer `scm:pm` endpoints; the dashboard uses these project-scoped routes (send org/project headers).
+Credentials are **stored** in **OAM** and exercised via **ORA** peer `scm:pm` endpoints; the dashboard uses these project-scoped routes (send org/project headers).
 
 - `GET /api/projects/{id}/github/milestones` → `{ milestones: [{ number, title, description, state, html_url }] }`
 - `POST /api/projects/{id}/github/milestones/assign` `{ specId?|featureId?|phaseId?, milestoneNumber?, title?, description?, state?, createIfMissing? }` → bind + optional upsert on GitHub
@@ -132,9 +132,9 @@ update end to end therefore needs a deployment with that permission granted.
 - `GET /api/projects/{id}/board` → `{ columns, board }`
 - `PUT /api/projects/{id}/board` → replace column membership
 - `GET /api/projects/{id}/tasks` → `{ tasks }`
-- `POST /api/projects/{id}/tasks` `{ title?, description, requireReviewBeforeCoding?, humanReviewRequired?, ideationId? }` — defaults to autopilot (`humanReviewRequired=false`) and always enqueues `run-pipeline` (plan → all subtasks → deliver → review → `done`)
+- `POST /api/projects/{id}/tasks` `{ title?, description, requireReviewBeforeCoding?, humanReviewRequired?, ideationId? }` — defaults to autopilot (`humanReviewRequired=false`) and always enqueues `run-pipeline` (plan → all subtasks → review → deliver → `done`)
 - `GET /api/projects/{id}/tasks/{specId}`
-- `PATCH /api/projects/{id}/tasks/{specId}` — includes `humanReviewRequired` (boolean). When **true** (default), after coding and delivery the bot runs automated review (+ qa-fix if needed) and stops at `human_review` for a human. When **false** (autopilot), the bot continues through merge and marks the task `done` without a human gate; the task session workspace is retained until completion.
+- `PATCH /api/projects/{id}/tasks/{specId}` — includes `humanReviewRequired` (boolean). When **true** (default), after coding the bot runs automated review (+ qa-fix if needed), opens a PR after review PASS when auto-deliver is on, and stops at `human_review` for a human. When **false** (autopilot), the bot continues through deliver/merge and marks the task `done` without a human gate; the task session workspace is retained until completion.
 - `DELETE /api/projects/{id}/tasks/{specId}`
 - `POST /api/projects/{id}/tasks/{specId}/move` `{ toStatus }` → the task fields (unchanged) plus `trigger`. **Moving a card starts the job that column represents** — see [Board moves start jobs](#board-moves-start-jobs).
 - `POST /api/projects/{id}/tasks/{specId}/approve` → move `human_review` → `queue` (approve for coding)
@@ -239,25 +239,25 @@ Job actions include: `run-planning`, `run-implementation`, `run-review`, `run-qa
 - `skip-to-phase` requires `specId` and 1-based `targetPhase` (plan phase number).
 - `run-ideation` may set `ideationType` to one of the ideation type keys; omit to fill all types.
 
-Jobs prepare an ephemeral clone (via ORA clone credentials when configured). When `/api/spawn-probe` reports `spawnReady: true` (docker CLI + daemon + `opm-runner-task:nas`), the job **docker-runs** one hardened ephemeral runner (`execution: "container"`), which invokes Cursor Agent CLI by default when `OPM_MODEL_API_KEY` / `CURSOR_API_KEY` is set (or OpenAI-compatible chat when `OPM_MODEL_PROVIDER=openai`) and writes `/out/result.json`. The control plane persists model output into `spec.md` / plan / progress / review / logs / roadmap / ideation. Without a key (or on model failure), the runner reports `mode=fallback` and shared builtin helpers still write artifacts. On spawn failure or `OPM_FORCE_BUILTIN=1`, jobs fall back to builtin-only (`execution: "builtin"`). Orchestrator `/api/spawn-probe` includes `modelConfigured` / `modelHonesty`.
+Jobs prepare an ephemeral clone (via ORA clone credentials when configured). When `/api/spawn-probe` reports `spawnReady: true` (docker CLI + daemon + `opm-runner-task:nas`), the job **docker-runs** one hardened ephemeral runner (`execution: "container"`). With `PEER_OAM_URL` set, the runner gets the model + API key resolved from OAM for that job’s agent phase (fail closed if unavailable). Without OAM, the legacy path uses `OPM_MODEL_API_KEY` / `CURSOR_API_KEY` (or OpenAI-compatible chat when `OPM_MODEL_PROVIDER=openai`). The runner writes `/out/result.json`; the control plane persists model output into `spec.md` / plan / progress / review / logs / roadmap / ideation. Without a key (or on model failure), the runner reports `mode=fallback` and shared builtin helpers still write artifacts. On spawn failure or `OPM_FORCE_BUILTIN=1`, jobs fall back to builtin-only (`execution: "builtin"`). Orchestrator `/api/spawn-probe` includes `modelConfigured` / `modelHonesty`.
 
-**Repo-aware ideation / roadmap:** for `run-ideation`, `run-roadmap-discovery`, and `run-roadmap-features`, the control plane builds a `projectIndex` from the mounted default-branch clone, writes a nested `context` pack into runner `input.json` (discovery vs features vs ideation — including `ideation_context`, implemented Done-board idea filters, and implemented feature exclusions), and applies model JSON (`vision`/`phases`/`features`/`ideas`) into the OPM store. Phase model env keys: `OPM_MODEL_IDEATION`, `OPM_MODEL_ROADMAP_DISCOVERY`, `OPM_MODEL_ROADMAP_FEATURES` (fallback `OPM_MODEL` → `auto`). When a linked repo+connector exists but no usable `.git` clone is mounted, the input includes an honesty note so the agent does not invent file paths.
+**Repo-aware ideation / roadmap:** for `run-ideation`, `run-roadmap-discovery`, and `run-roadmap-features`, the control plane builds a `projectIndex` from the mounted default-branch clone, writes a nested `context` pack into runner `input.json` (discovery vs features vs ideation — including `ideation_context`, implemented Done-board idea filters, and implemented feature exclusions), and applies model JSON (`vision`/`phases`/`features`/`ideas`) into the OPM store. With OAM unset, phase model env keys: `OPM_MODEL_IDEATION`, `OPM_MODEL_ROADMAP_DISCOVERY`, `OPM_MODEL_ROADMAP_FEATURES` (fallback `OPM_MODEL` → `auto`). When a linked repo+connector exists but no usable `.git` clone is mounted, the input includes an honesty note so the agent does not invent file paths.
 
 ### What jobs do and do not do
 
 Limits that are easy to misread from the action list above:
 
 - **Implementation uses a shared task workspace, not a throwaway clone per subtask.**
-  Coding jobs mount `$OPM_JOB_TMP/tasks/{projectId}/{specId}/repo` read-write at `/repo`.
+  Coding and review jobs mount `$OPM_JOB_TMP/tasks/{projectId}/{specId}/repo` (coding read-write; review read-only) at `/repo`.
   Each subtask still runs in a **fresh ephemeral runner container**, but all coding steps share
   the same host volume; model `files[]` output is applied to disk immediately and merged into
-  the task change set.   When the last coding subtask succeeds, delivery can run automatically
-  (`OPM_IMPL_AUTO_DELIVER`, default on). **Human review gate** (`humanReviewRequired`, default on):
-  after deliver the bot chains `run-review` (+ `run-qa-fix` if needed) and stops at `human_review`;
-  the session workspace is released at review start. **Autopilot** (`humanReviewRequired: false`):
-  the same session workspace stays mounted for implementation, qa-fix, and review until the PR is
-  merged and the task is `done`. **Pause** keeps the workspace; auto-chain stops until **resume**.
-- **Other jobs still use ephemeral clones.** Planning, review, ideation, and roadmap jobs clone
+  the task change set. When coding completes, the bot chains `run-review`. After review **PASS**
+  (and a complete plan), delivery can run automatically (`OPM_IMPL_AUTO_DELIVER`, default on).
+  **Human review gate** (`humanReviewRequired`, default on): after review PASS + optional deliver,
+  the bot stops at `human_review` and releases the session workspace. **Autopilot**
+  (`humanReviewRequired: false`): the same session stays until the PR is merged and the task is
+  `done`. **Pause** keeps the workspace; auto-chain stops until **resume**.
+- **Other jobs still use ephemeral clones.** Planning, ideation, and roadmap jobs clone
   under `$OPM_JOB_TMP/{runId}/repo`, mount read-only, and discard scratch after the run.
   Delivery without a live task workspace still clones under `$OPM_JOB_TMP/deliver-<uuid>/repo`.
 - **`run-roadmap-discovery`, `run-roadmap-features`, and `run-ideation`** prefer model

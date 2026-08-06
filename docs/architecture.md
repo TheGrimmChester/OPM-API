@@ -13,9 +13,11 @@
 flowchart LR
   UI[opm-dashboard] -->|user JWT| API[opm-api]
   API -->|PEER_OPA_URL| HUB[opa-hub]
+  API -->|PEER_OAM_URL| OAM[oam-api]
   API -->|PEER_ORA_URL| ORA[ora-api]
   HUB -->|identity JWTs / orgs| API
-  ORA -->|connectors + clone creds| API
+  OAM -->|model + API key resolve| API
+  ORA -->|list connectors + clone/push/PR| API
   API --> FS[(OPM_DATA_DIR board/tasks)]
   API -->|tmp clone| TMP["/tmp/opm-jobs"]
   API -->|docker run when spawnReady| RUN[opm-runner-task]
@@ -31,11 +33,12 @@ flowchart LR
 An OPM **project** is a linked GitHub repo (`owner/repo`), discovered via:
 
 1. **OPA-Hub** — user identity (co-deployed JWTs) and organization directory (`/api/tenancy/organizations`)
-2. **ORA** — GitHub App installations and PATs (connectors); `GET /api/connectors` / `…/repos`
+2. **OAM** — connector / credential **storage** and per-agent model bindings (`PEER_OAM_URL`)
+3. **ORA** — GitHub App / PAT **protocol** (list connectors/repos, clone/push/PR); `GET /api/connectors` / `…/repos`
 
 OPM stores **references** (`connectorId`, `ownerRepo`, `organizationId`) only. It never stores GitHub App private keys or PATs.
 
-There is **no** “add local folder” flow and no durable project root under `~/.config/opm/projects/...` as a clone. Job execution uses an **ephemeral tmp clone**, then cleans up.
+There is **no** “add local folder” flow and no durable project root under `~/.config/opm/projects/...` as a clone. Job execution uses an **ephemeral tmp clone** (or a task-session workspace under `$OPM_JOB_TMP/tasks/...` for multi-step coding).
 
 ## Data layout
 
@@ -59,7 +62,7 @@ $OPM_DATA_DIR/projects/<projectId>/
 
 Specs may also be committed in-repo later; OPM board state remains keyed by `owner/repo` + task id in the API store.
 
-**Job workspaces**: `$OPM_JOB_TMP/<runId>/repo` (default `/tmp/opm-jobs/...`) — created for a run, removed afterward. A delivery uses the same machinery under `$OPM_JOB_TMP/deliver-<uuid>/repo`.
+**Job workspaces**: `$OPM_JOB_TMP/<runId>/repo` (default `/tmp/opm-jobs/...`) — created for a run, removed afterward. Task sessions persist under `$OPM_JOB_TMP/tasks/{projectId}/{specId}/repo` through coding and review. A delivery may also use `$OPM_JOB_TMP/deliver-<uuid>/repo`.
 
 `specs/<specId>/changes.json` is the recorded change set: the `files[]` and
 `commitMessage` a runner produced, waiting to be delivered. It is written only by
@@ -67,13 +70,13 @@ a run that genuinely produced source changes, and removed once delivered.
 
 ## Code delivery chain
 
-An implementation job and a delivery are deliberately two steps, because the job
-workspace is ephemeral and the operator decides when code reaches the repository.
+An implementation job and a delivery are deliberately two steps: the runner returns
+a structured change set; the control plane applies it and opens a PR via ORA.
 
 ```text
 run-implementation                     deliver
 ──────────────────                     ───────
-clone repo (ORA scm:clone)             clone repo (ORA scm:clone)
+clone repo (ORA scm:clone)             clone or reuse task workspace
 mount read-only at /repo                apply changes.json
 runner reads source, returns            git checkout -b opm/<specId>
   files[] + commitMessage               git add -- <applied paths only>
@@ -86,13 +89,8 @@ record specs/<specId>/changes.json      git commit
 The runner never writes to the repository: `/repo` is a read-only bind, and the
 runner's only output is the structured change set. Applying, committing and
 pushing happen in the control plane, which is the only component that validates
-paths and stages files.
-
-The clone is currently **created and not used**: `executeJob` calls `prepareJobWorkspace` and then discards the
-path (`job_runner.go:45-50`, `_ = workDir`). Nothing reads or writes files in it, and the service contains no
-`git add` / `commit` / `push` — only `git clone` (`workspace.go:57`, `:69`). Job output lands entirely in
-`$OPM_DATA_DIR`, never in the repository. A code-delivery path (branch, commit, pull request) is a design gap,
-not a disabled feature.
+paths and stages files. After automated review **PASS**, auto-deliver may run
+when `OPM_IMPL_AUTO_DELIVER` is on and ORA is linked.
 
 ## Kanban columns
 
@@ -100,14 +98,15 @@ Ordered: `backlog` → `queue` → `in_progress` → `review` → `human_review`
 
 `review` is the automated review-runner column. Human approval lives in `human_review` when `humanReviewRequired` is true.
 
-**Auto pipeline:** creating a task defaults to autopilot and enqueues `run-pipeline` (PR only after all coding subtasks) through to `done`.
+**Auto pipeline:** creating a task defaults to autopilot and enqueues `run-pipeline` (PR only after review PASS) through to `done`.
 
-## Boundary vs ORA / Hub
+## Boundary vs Hub / OAM / ORA
 
 | Product | Owns |
 |---------|------|
-| **OPA-Hub** | User JWTs, agent registry, organization directory |
-| **ORA** | Repo Watch, SCM connectors (GitHub App/PAT), code review, clone credentials |
-| **OPM** | Kanban, roadmaps, ideation, task specs/plans, task-automation jobs |
+| **OPA-Hub** | User JWTs, organization directory surface |
+| **OAM** | Connector / AI credential storage, per-agent model bindings |
+| **ORA** | Repo Watch, GitHub App/PAT protocol, code review, short-lived clone/push/PR credentials |
+| **OPM** | Kanban, roadmaps, ideation, task specs/plans, task-automation jobs, delivery apply |
 
 Dashboards never call a foreign API directly. Cross-product calls use `PEER_*_URL` + service JWTs.

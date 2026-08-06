@@ -470,10 +470,10 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 				SpecID       string `json:"specId"`
 				TargetPhase  int    `json:"targetPhase"`
 				IdeationType string `json:"ideationType"`
-				// Competitors and AudienceNotes are the roadmap pipeline's inputs,
-				// carried over from ORA's /api/scm/roadmap/generate request. They are
-				// per-run: which competitors matter is answered differently each time
-				// discovery is re-run.
+				// Competitors and AudienceNotes are OPM roadmap-pipeline inputs
+				// (historically shaped like ORA's old /api/scm/roadmap/generate).
+				// They are per-run: which competitors matter is answered differently
+				// each time discovery is re-run.
 				Competitors   []string `json:"competitors,omitempty"`
 				AudienceNotes string   `json:"audienceNotes,omitempty"`
 				// Model is a per-task model override for this job only — the

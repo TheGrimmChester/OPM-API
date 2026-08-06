@@ -9,12 +9,12 @@ Ephemeral job clones under `OPM_JOB_TMP` are not durable and should not be backe
 
 ## Restore
 
-Restore the data directory onto a host with the same `OPM_DATA_DIR`. Reconfigure `PEER_OPA_URL` / `PEER_ORA_URL` so discovery and clones work. Connectors themselves live in ORA (ClickHouse / connector store).
+Restore the data directory onto a host with the same `OPM_DATA_DIR`. Reconfigure `PEER_OPA_URL` / `PEER_ORA_URL` / `PEER_OAM_URL` so discovery, clones, and model resolve work. Connector and AI credential **storage** lives in **OAM**; ORA provides the GitHub protocol surface.
 
 ## Health
 
 - `GET /api/health` on `opm-api`
-- `GET /api/hub/status` — verify hub + ORA linkage
+- `GET /api/hub/status` — verify hub / OAM / ORA linkage (`credentials_home` reflects configured peers)
 - `GET /api/peer/health` with a service JWT when `OPEN_SERVICE_JWT_SECRET` is set
 
 ## Migration from local-folder projects

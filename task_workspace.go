@@ -69,14 +69,13 @@ func cleanupRunnerScratch(runID string) {
 }
 
 // usesTaskWorkspace reports whether a job should mount the persistent task session repo.
-// Autopilot tasks also use the session for review and qa-fix so fixes stay in one tree.
+// Review and (for autopilot) qa-fix reuse the session so post-review deliver can
+// open a PR from the same tree coding wrote.
 func usesTaskWorkspace(action string, autopilot bool) bool {
 	switch action {
-	case "run-implementation", "run-pipeline":
+	case "run-implementation", "run-pipeline", "run-review":
 		return true
 	case "run-qa-fix":
-		return autopilot
-	case "run-review":
 		return autopilot
 	default:
 		return false
@@ -130,6 +129,8 @@ func implAutoChainEnabled() bool {
 	}
 }
 
+// implAutoDeliverEnabled reports whether OPM_IMPL_AUTO_DELIVER is on (default on).
+// When enabled, postReviewJob opens a PR after review PASS — not after coding.
 func implAutoDeliverEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(envOr("OPM_IMPL_AUTO_DELIVER", "1"))) {
 	case "0", "false", "no", "off":
