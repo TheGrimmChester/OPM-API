@@ -15,17 +15,20 @@ func registerPeerSCMMux(mux *http.ServeMux) {
 }
 
 type peerSCMEventRequest struct {
-	EventID        string   `json:"event_id"`
+	ID             string   `json:"id,omitempty"`
 	EventType      string   `json:"event_type"`
 	OrganizationID string   `json:"organization_id"`
 	ProjectID      string   `json:"project_id"`
 	ConnectorID    string   `json:"connector_id"`
 	RepoFullName   string   `json:"repo_full_name"`
-	Ref            string   `json:"ref"`
-	SHA            string   `json:"sha"`
+	Ref            string   `json:"ref,omitempty"`
+	DefaultBranch  string   `json:"default_branch,omitempty"`
+	PRNumber       int      `json:"pr_number,omitempty"`
+	CommitSHA      string   `json:"commit_sha"`
+	SCMJobID       string   `json:"scm_job_id,omitempty"`
 	ChangedPaths   []string `json:"changed_paths"`
-	ChecksFilter   []string `json:"checks_filter"`
-	WebhookMode    string   `json:"webhook_mode"`
+	Checks         []string `json:"checks"`
+	Dispatch       *bool    `json:"dispatch,omitempty"`
 }
 
 type peerCheckerResponse struct {
