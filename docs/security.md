@@ -16,6 +16,8 @@ When `OPA_AUTH_REQUIRED=1`, send **`X-Organization-ID`** / **`X-Project-ID`** on
 
 Task-automation runners must not receive `JWT_SECRET`, service JWTs, or connector secrets. Use `Open-Job-Go` scrubbing and hardened `docker run` (cap-drop, read-only, no docker.sock in jobs).
 
+When `OPA_AUTH_REQUIRED=1`, model-backed jobs require **`PEER_OAM_URL`**. The legacy deployment-wide `OPM_MODEL_API_KEY` / `CURSOR_API_KEY` path is refused for AI phases so tenants cannot share one key.
+
 ## Secrets on disk
 
 OPM does not store GitHub App private keys or PATs. Those live in **OAM** (account plane); ORA issues short-lived SCM credentials from that store. Board/task JSON under `OPM_DATA_DIR` must not contain clone tokens. Ephemeral job credentials are request-scoped and discarded with the tmp workspace.
@@ -37,6 +39,8 @@ that a read-only clone credential does not carry. Protocol stays in **ORA**
   written under `OPM_DATA_DIR`, and never persisted on a task.
 - Git output that can reach an API caller is passed through a redactor that
   replaces the credential with `[redacted]`, as a second line of defence.
+- Clone failures apply the same redactor to git stdout/stderr before surfacing
+  errors.
 - The askpass helper lives inside the ephemeral workspace and is removed with it.
 
 ## What a delivery may write

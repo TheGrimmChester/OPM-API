@@ -76,7 +76,9 @@ func cloneRepoInto(p Project, root, subdir string) (string, error) {
 		cmd.Dir = root
 		out2, err2 := cmd.CombinedOutput()
 		if err2 != nil {
-			return "", fmt.Errorf("git clone: %v (%s / %s)", err2, truncateBytes(out, 200), truncateBytes(out2, 200))
+			return "", fmt.Errorf("git clone: %v (%s / %s)", err2,
+				redactSecret(truncateBytes(out, 200), token),
+				redactSecret(truncateBytes(out2, 200), token))
 		}
 	}
 	return work, nil

@@ -70,6 +70,7 @@ func TestAgentKeysCoverEveryModelPhase(t *testing.T) {
 // drop OPM_MODEL_CODING for deployments that set it.
 func TestLegacyEnvPathKeepsPerPhaseModels(t *testing.T) {
 	t.Setenv("PEER_OAM_URL", "")
+	t.Setenv("OPA_AUTH_REQUIRED", "0")
 	t.Setenv("OPM_MODEL", "auto")
 	t.Setenv("OPM_MODEL_CODING", "strong-model")
 	t.Setenv("OPM_MODEL_PLANNING", "light-model")
@@ -94,6 +95,34 @@ func TestLegacyEnvPathKeepsPerPhaseModels(t *testing.T) {
 	}
 	if !coding.hasKey() {
 		t.Fatal("legacy path should carry the env key")
+	}
+}
+
+// Authenticated deployments must not fall back to a deployment-wide key when OAM
+// is unset — every org would share one credential.
+func TestAuthRequiredRefusesLegacyModelPath(t *testing.T) {
+	t.Setenv("PEER_OAM_URL", "")
+	t.Setenv("OPA_AUTH_REQUIRED", "1")
+	t.Setenv("OPM_MODEL_API_KEY", "crsr_deployment_wide_key")
+
+	cfg, err := resolveJobModelConfig(context.Background(), Job{Action: "run-implementation"})
+	if err == nil {
+		t.Fatalf("expected error, got provider=%q model=%q", cfg.Provider, cfg.Model)
+	}
+	if cfg.hasKey() {
+		t.Fatal("legacy key must not be returned when auth is required without OAM")
+	}
+	if !strings.Contains(err.Error(), "PEER_OAM_URL") {
+		t.Fatalf("error should mention OAM requirement: %v", err)
+	}
+
+	t.Setenv("OPA_AUTH_REQUIRED", "0")
+	cfg, err = resolveJobModelConfig(context.Background(), Job{Action: "run-implementation"})
+	if err != nil {
+		t.Fatalf("auth off should keep legacy path: %v", err)
+	}
+	if !cfg.hasKey() {
+		t.Fatal("auth off should still use deployment-wide key")
 	}
 }
 
@@ -166,6 +195,7 @@ func TestResolveFailureDoesNotFallBackToEnv(t *testing.T) {
 func TestProbeHonestyReflectsOAM(t *testing.T) {
 	t.Setenv("OPM_MODEL_API_KEY", "")
 	t.Setenv("CURSOR_API_KEY", "")
+	t.Setenv("OPA_AUTH_REQUIRED", "0")
 
 	t.Setenv("PEER_OAM_URL", "")
 	if modelAPIKeyPresent() {
@@ -182,5 +212,15 @@ func TestProbeHonestyReflectsOAM(t *testing.T) {
 	h := modelConfigHonesty()
 	if !strings.Contains(h, "OAM") || !strings.Contains(h, "credential_unavailable") {
 		t.Fatalf("OAM honesty should explain per-job resolution and fail-closed: %q", h)
+	}
+
+	t.Setenv("PEER_OAM_URL", "")
+	t.Setenv("OPA_AUTH_REQUIRED", "1")
+	if modelAPIKeyPresent() {
+		t.Fatal("auth on without OAM must not report model path available")
+	}
+	h = modelConfigHonesty()
+	if !strings.Contains(h, "PEER_OAM_URL") || !strings.Contains(h, "refused") {
+		t.Fatalf("auth-on honesty should refuse legacy keys: %q", h)
 	}
 }

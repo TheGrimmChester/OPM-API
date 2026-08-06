@@ -42,7 +42,17 @@ With `PEER_OAM_URL` set, each job resolves its model **and** API key from OAM (`
 | OPM → ORA | Milestones + Projects v2 list/bind/sync; issues | `scm:pm` |
 | OPM → ORA | Push credentials, open/merge pull requests | `scm:pr` |
 | OPM → ORA | Deep-link / delegate review (optional; not implemented) | review scopes as needed |
+| ORA → OPM | SCM checker fan-out | `scm:events` (`POST /api/peer/scm/events`) |
 | Dashboard → foreign API | **Forbidden** — UI talks only to `opm-api` | — |
+
+## SCM checker peer (stub)
+
+```
+POST /api/peer/scm/events   (service JWT, scope scm:events, aud=opm-api)
+→ { "checkers": [] }
+```
+
+Future checker **`opm:delivery`**: PR merge / issue events → task state sync (uses existing ORA peer SCM APIs). Family contract: [OPA-Stack interop — SCM checker platform](https://github.com/TheGrimmChester/OPA-Stack/blob/main/docs/interop.md#scm-checker-platform).
 
 Service JWTs use `iss=opm-api` / `aud=ora-api|opa-hub|oam-api` / short `exp`. Probe: `GET /api/peer/health`.
 
