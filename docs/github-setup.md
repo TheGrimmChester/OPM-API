@@ -33,7 +33,9 @@ On `ora-api`, set (see [configuration.md](configuration.md)):
 - `OPA_CONNECTOR_SECRET` (AES-GCM; must match `OAM_SECRET_KEY` when OAM holds ciphertext)
 - `OPA_PUBLIC_URL` / `ORA_PUBLIC_URL` (OAuth callback and webhooks)
 
-Install the GitHub App on the org or account whose repos OPM should link. Manage connector records and AI provider keys in **OAM** when co-deployed.
+Install the GitHub App **from OAM Connectors** while signed into the target Open org (organization accounts only). OAM peers to ORA, which mints a signed install `state` so the connector lands under that Open tenant — not by matching the GitHub install login to an Open org name. Marketplace/orphan installs without `state` stay `pending_claim` until an org admin claims with the callback `claim_token` on OAM (`POST /api/connectors/{id}/claim` `{ "claim_token": "…" }`). OPM list/create re-check active + same org (foreign `connectorId` → 404/403). Manage connectors and AI provider keys in **OAM** (`/connectors`, smoke `:8097` / NAS `:18097`).
+
+After a connector is **active** under an Open org, OPM can suggest unlinked install repos: `GET /api/github/connectors/{id}/project-suggestions` (keyed by the connector’s Open `organization_id`). Link individually with `POST /api/projects` — OPM does not mass-create projects from install events.
 
 ## 2. Wire OPM peers
 
@@ -65,8 +67,10 @@ Rebuild with production tags (`opm-api:nas`, `opm-dashboard:nas`) — never smok
 
 1. **Projects** → **Link GitHub repo**
 2. Select **Hub organization** (from `GET /api/hub/organizations`)
-3. Select **GitHub connector** (from ORA via `GET /api/github/connectors`)
+3. Select **GitHub connector** (listed via ORA; install/manage in OAM → `GET /api/github/connectors`)
 4. Pick a **repository** and submit → `POST /api/projects`
+
+If no connectors appear, open **Manage in Account Manager** (OAM `/connectors`) and install a GitHub App or PAT for the selected org.
 
 ## 5. Bind GitHub Milestones and Projects
 
