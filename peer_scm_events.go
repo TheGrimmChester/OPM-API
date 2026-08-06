@@ -1,0 +1,52 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+)
+
+// SCM checker fan-out from ora-api. Stub this ship — future checker:
+//   opm:delivery — PR merge / issue events → task state sync via ORA peer SCM APIs.
+
+const peerSCMEventsScope = "scm:events"
+
+func registerPeerSCMMux(mux *http.ServeMux) {
+	registerPeerAuth(mux, "/api/peer/scm/events", peerSCMEventsScope, peerSCMEventsScope, handlePeerSCMEvents)
+}
+
+type peerSCMEventRequest struct {
+	EventID        string   `json:"event_id"`
+	EventType      string   `json:"event_type"`
+	OrganizationID string   `json:"organization_id"`
+	ProjectID      string   `json:"project_id"`
+	ConnectorID    string   `json:"connector_id"`
+	RepoFullName   string   `json:"repo_full_name"`
+	Ref            string   `json:"ref"`
+	SHA            string   `json:"sha"`
+	ChangedPaths   []string `json:"changed_paths"`
+	ChecksFilter   []string `json:"checks_filter"`
+	WebhookMode    string   `json:"webhook_mode"`
+}
+
+type peerCheckerResponse struct {
+	ID           string `json:"id"`
+	CheckRunName string `json:"check_run_name"`
+	ShouldRun    bool   `json:"should_run"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+func handlePeerSCMEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body peerSCMEventRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"checkers": []peerCheckerResponse{},
+		"note":     "future checker opm:delivery on PR merge / issue sync hooks",
+	})
+}

@@ -35,3 +35,7 @@ func registerLocalAuthMux(mux *http.ServeMux) {
 func AuthMiddleware(handler http.HandlerFunc, requiredRole string) http.HandlerFunc {
 	return authGate.Middleware(requiredRole, handler)
 }
+
+func AuthUserOrServiceMiddleware(handler http.HandlerFunc, requiredRole, requiredServiceScope string) http.HandlerFunc {
+	return authGate.UserOrServiceMiddleware(requiredRole, requiredServiceScope, handler)
+}
