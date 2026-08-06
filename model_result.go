@@ -90,6 +90,9 @@ func modelAPIKeyPresent() bool {
 	if oamConfigured() {
 		return true
 	}
+	if authRequiredEnv() {
+		return false
+	}
 	return strings.TrimSpace(envOr("OPM_MODEL_API_KEY", "")) != "" ||
 		strings.TrimSpace(envOr("CURSOR_API_KEY", "")) != ""
 }
@@ -126,6 +129,10 @@ func modelConfigHonesty() string {
 		return "models and API keys resolve per job from OAM (PEER_OAM_URL), scoped to the acting user's org " +
 			"and their per-agent binding; a job whose org has no credential fails closed with credential_unavailable. " +
 			"OPM_MODEL* environment variables no longer participate."
+	}
+	if authRequiredEnv() {
+		return "OPA_AUTH_REQUIRED is enabled but PEER_OAM_URL is unset — model-backed jobs are refused until OAM is configured. " +
+			"Legacy OPM_MODEL* deployment-wide keys are not used in authenticated deployments."
 	}
 	if !modelAPIKeyPresent() {
 		return "OPM_MODEL_API_KEY/CURSOR_API_KEY unset — runner reports fallback; control plane uses builtin artifact helpers."

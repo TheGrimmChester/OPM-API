@@ -40,6 +40,7 @@ func main() {
 	initAuthGate()
 	initTenantAuth()
 	authRequired := authRequiredEnv()
+	setAuthEnforced(authRequired)
 	if authRequired {
 		log.Printf("auth: ENABLED (OPA_AUTH_REQUIRED); tenant org scope enforced")
 	} else {
@@ -52,6 +53,8 @@ func main() {
 	if oamConfigured() {
 		log.Printf("oam: %s — models and API keys resolve per job (OPM_MODEL* no longer participate)", oamPeerURL())
 		go publishAgentCatalog(context.Background())
+	} else if authRequired {
+		log.Printf("oam: PEER_OAM_URL unset — model-backed jobs will fail until OAM is configured (legacy keys disabled when OPA_AUTH_REQUIRED=1)")
 	} else {
 		log.Printf("oam: PEER_OAM_URL unset — using the legacy OPM_MODEL*/CURSOR_API_KEY environment path")
 	}
@@ -88,6 +91,7 @@ func main() {
 
 	registerLocalAuthMux(mux)
 	registerOPMMux(mux, store, authView, authAdmin)
+	registerPeerSCMMux(mux)
 	registerServiceAuthProbe(mux)
 
 	srv := &http.Server{

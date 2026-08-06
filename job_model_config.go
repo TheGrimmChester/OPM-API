@@ -52,6 +52,15 @@ func (c jobModelConfig) hasKey() bool { return strings.TrimSpace(c.APIKey) != ""
 // surfaces it rather than degrading to a different credential.
 func resolveJobModelConfig(ctx context.Context, j Job) (jobModelConfig, error) {
 	if !oamConfigured() {
+		agentKey := strings.TrimSpace(j.AgentKey)
+		if agentKey == "" {
+			agentKey = agentKeyForAction(j.Action)
+		}
+		if agentKey != "" && authRequiredEnv() {
+			return jobModelConfig{}, fmt.Errorf(
+				"PEER_OAM_URL required when OPA_AUTH_REQUIRED is enabled (legacy deployment-wide keys are not tenant-safe)",
+			)
+		}
 		return legacyEnvModelConfig(j.Action), nil
 	}
 
