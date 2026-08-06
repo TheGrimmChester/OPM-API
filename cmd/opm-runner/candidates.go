@@ -34,6 +34,7 @@ const (
 	kindAPIAnthropic  = "api_anthropic"
 	kindCLICursor     = "cli_cursor"
 	kindCLIClaudeCode = "cli_claude_code"
+	kindCLIQwenCode   = "cli_qwen_code"
 	kindCLIGeneric    = "cli_generic"
 )
 
@@ -65,7 +66,7 @@ func (c candidate) name() string {
 // credential sent somewhere it was not issued for.
 func candidateRunnable(c candidate) bool {
 	switch c.Kind {
-	case kindAPIOpenAI, kindAPIAnthropic, kindCLICursor, kindCLIClaudeCode, kindCLIGeneric:
+	case kindAPIOpenAI, kindAPIAnthropic, kindCLICursor, kindCLIClaudeCode, kindCLIQwenCode, kindCLIGeneric:
 		return true
 	case "":
 		// No kind at all means an older OAM that only sent `provider`. Fall back
@@ -258,6 +259,8 @@ func callCandidate(c candidate, system, user string) (string, error) {
 		return callAnthropic(base, c.APIKey, c.Model, system, user)
 	case kindCLIClaudeCode:
 		return callClaudeCode(c, system, user)
+	case kindCLIQwenCode:
+		return callQwenCode(c, system, user)
 	case kindCLIGeneric:
 		return callGenericCLI(c, system, user)
 	case kindCLICursor:

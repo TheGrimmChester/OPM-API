@@ -44,6 +44,14 @@
 
 **Legacy rollback:** leave `PEER_OAM_URL` empty and set `OPM_MODEL_API_KEY` (or `CURSOR_API_KEY`) plus optional `OPM_MODEL*` phase overrides.
 
+### Runner CLI overrides (`opm-runner-task`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPM_CURSOR_AGENT_BIN` | `agent` | Cursor Agent CLI binary |
+| `OPM_CLAUDE_CODE_BIN` | `claude` | Claude Code CLI binary |
+| `OPM_QWEN_CODE_BIN` | `qwen` | Qwen Code CLI binary (`cli_qwen_code` endpoints) |
+
 ## GitHub credentials
 
 OPM does **not** take `GITHUB_TOKEN` or GitHub App private keys. Connector / PAT **storage** lives in **OAM** (crypto key must match ORA’s connector secret for migrated ciphertext). GitHub App **protocol** (install, callback, webhooks, short-lived clone/push tokens) runs on **ORA**:

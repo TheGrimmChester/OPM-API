@@ -116,7 +116,7 @@ func TestUnknownKindIsNotRunnable(t *testing.T) {
 	if candidateRunnable(candidate{Kind: "quantum_api", APIKey: "x"}) {
 		t.Fatal("an unrecognised kind must not be attempted")
 	}
-	for _, k := range []string{kindAPIOpenAI, kindAPIAnthropic, kindCLICursor, kindCLIClaudeCode, kindCLIGeneric} {
+	for _, k := range []string{kindAPIOpenAI, kindAPIAnthropic, kindCLICursor, kindCLIClaudeCode, kindCLIQwenCode, kindCLIGeneric} {
 		if !candidateRunnable(candidate{Kind: k, APIKey: "x"}) {
 			t.Fatalf("kind %q should be runnable", k)
 		}
@@ -298,5 +298,39 @@ func TestNoCandidatesIsADistinctError(t *testing.T) {
 	_, _, err := callWithFailover(nil, "s", "u")
 	if err == nil || !strings.Contains(err.Error(), "no model candidate") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCallQwenCodeRejectsEmptyOrAutoModel(t *testing.T) {
+	for _, model := range []string{"", "auto", " AUTO "} {
+		c := candidate{Kind: kindCLIQwenCode, Model: model, APIKey: "sk-test"}
+		_, err := callQwenCode(c, "sys", "usr")
+		if err == nil {
+			t.Fatalf("model %q should fail closed", model)
+		}
+		if !strings.Contains(err.Error(), "explicit model") {
+			t.Fatalf("unexpected error for model %q: %v", model, err)
+		}
+	}
+}
+
+func TestCallCandidateDispatchesQwenCode(t *testing.T) {
+	clearCandidateEnv(t)
+	t.Setenv("OPM_MODEL_1_KIND", "cli_qwen_code")
+	t.Setenv("OPM_MODEL_1_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+	t.Setenv("OPM_MODEL_1_MODEL", "qwen3-coder-plus")
+	t.Setenv("OPM_MODEL_1_API_KEY", "sk-dashscope")
+	t.Setenv("OPM_MODEL_CANDIDATE_COUNT", "1")
+
+	cands := loadCandidates()
+	if len(cands) != 1 || cands[0].Kind != kindCLIQwenCode {
+		t.Fatalf("candidates = %+v", cands)
+	}
+	_, err := callCandidate(cands[0], "system", "user")
+	if err == nil {
+		t.Fatal("expected an error without qwen binary on PATH")
+	}
+	if !strings.Contains(err.Error(), "qwen") {
+		t.Fatalf("expected qwen dispatch error, got: %v", err)
 	}
 }
