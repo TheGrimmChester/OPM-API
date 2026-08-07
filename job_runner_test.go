@@ -75,24 +75,11 @@ func TestBuiltinPlanningAndImplementation(t *testing.T) {
 		t.Fatalf("want review got %s", cur.Status)
 	}
 
-	rj, err := store.CreateJob(p.ID, "run-review", task.SpecID, "opm-runner-task:nas")
-	if err != nil {
-		t.Fatal(err)
-	}
-	executeJob(store, rj)
-	rj, _ = store.GetJob(p.ID, rj.RunID)
-	if rj.State != "completed" || !strings.Contains(rj.Message, "PASS") {
-		t.Fatalf("review=%+v", rj)
-	}
-	cur, _ = store.GetTask(p.ID, task.SpecID)
-	if cur.Status != "human_review" {
-		t.Fatalf("after review status=%s", cur.Status)
+	_, err = store.CreateJob(p.ID, "run-review", task.SpecID, "opm-runner-task:nas")
+	if err == nil || !strings.Contains(err.Error(), "gone") {
+		t.Fatalf("run-review must be rejected, err=%v", err)
 	}
 
-	_, err = store.ApproveForCoding(p.ID, task.SpecID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	_, _ = store.MoveTask(p.ID, task.SpecID, "done")
 
 	cj, err := store.CreateJob(p.ID, "generate-changelog", "", "opm-runner-task:nas")
@@ -351,12 +338,12 @@ func TestRunPipelineEndToEnd(t *testing.T) {
 	if j.State != "completed" {
 		t.Fatalf("pipeline job=%+v", j)
 	}
-	if !strings.Contains(j.Message, "Pipeline complete") || !strings.Contains(j.Message, "PASS") {
-		t.Fatalf("want Pipeline complete with PASS, got %q", j.Message)
+	if !strings.Contains(j.Message, "Pipeline complete") || !strings.Contains(j.Message, "review") {
+		t.Fatalf("want Pipeline complete parked in review, got %q", j.Message)
 	}
 	cur, _ := store.GetTask(p.ID, task.SpecID)
-	if cur.Status != "done" {
-		t.Fatalf("want done after pipeline, got %s", cur.Status)
+	if cur.Status != "review" {
+		t.Fatalf("want review after pipeline, got %s", cur.Status)
 	}
 	plan, _ := store.GetPlan(p.ID, task.SpecID)
 	if pending := firstPendingSubtaskID(plan); pending != "" {

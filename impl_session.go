@@ -4,9 +4,9 @@ import (
 	"fmt"
 )
 
-// postImplementationJob chains the next coding subtask, or chains run-review when
-// the coding phase is complete. Delivery (PR open) happens only after review PASS
-// (see postReviewJob). The task session workspace is retained for review.
+// postImplementationJob chains the next coding subtask, or parks the task in
+// review for human approve/deliver when coding is complete. Deep review is ORA's
+// domain — OPM does not enqueue run-review or auto-deliver after local review.
 func postImplementationJob(store *Store, j Job) (string, error) {
 	if j.SpecID == "" {
 		return "", nil
@@ -36,5 +36,5 @@ func postImplementationJob(store *Store, j Job) (string, error) {
 	if !allCodingSubtasksComplete(plan) {
 		return "", nil
 	}
-	return chainReview(store, j)
+	return parkTaskForHumanReview(store, j)
 }

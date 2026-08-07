@@ -16,7 +16,7 @@ Verify peers from an authenticated session:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" http://<host>:8098/api/hub/status
-curl -H "Authorization: Bearer $TOKEN" http://<host>:8098/api/hub/organizations
+curl -H "Authorization: Bearer $TOKEN" http://<host>:8098/api/oam/organizations
 curl -H "Authorization: Bearer $TOKEN" "http://<host>:8098/api/github/connectors?organizationId=default-org"
 ```
 
@@ -33,7 +33,7 @@ On `ora-api`, set (see [configuration.md](configuration.md)):
 - `OPA_CONNECTOR_SECRET` (AES-GCM; must match `OAM_SECRET_KEY` when OAM holds ciphertext)
 - `OPA_PUBLIC_URL` / `ORA_PUBLIC_URL` (OAuth callback and webhooks)
 
-Install the GitHub App **from OAM Connectors** while signed into the target Open org (organization accounts only). OAM peers to ORA, which mints a signed install `state` so the connector lands under that Open tenant — not by matching the GitHub install login to an Open org name. Marketplace/orphan installs without `state` stay `pending_claim` until an org admin claims with the callback `claim_token` on OAM (`POST /api/connectors/{id}/claim` `{ "claim_token": "…" }`). OPM list/create re-check active + same org (foreign `connectorId` → 404/403). Manage connectors and AI provider keys in **OAM** (`/connectors`, smoke `:8097` / NAS `:18097`).
+Install the GitHub App **from OAM Connectors** while signed into the target Open account (organization or personal). Personal Open users own the connector under `user_id` and may install the App on GitHub organization accounts they admin. OAM peers to ORA, which mints a signed install `state` so the connector lands under that Open tenant — not by matching the GitHub install login to an Open org name. Marketplace/orphan installs without `state` stay `pending_claim` until an admin claims with the callback `claim_token` on OAM (`POST /api/connectors/{id}/claim` `{ "claim_token": "…" }`). OPM list/create re-check active + same org (foreign `connectorId` → 404/403). Manage connectors and AI provider keys in **OAM** (`/connectors`, smoke `:8097` / NAS `:18097`).
 
 After a connector is **active** under an Open org, OPM can suggest unlinked install repos: `GET /api/github/connectors/{id}/project-suggestions` (keyed by the connector’s Open `organization_id`). Link individually with `POST /api/projects` — OPM does not mass-create projects from install events.
 
@@ -53,7 +53,7 @@ opm-api:
     OPM_RUNNER_TAG: nas         # production / NAS only
 ```
 
-With `PEER_OAM_URL` set, configure models and API keys in the OAM console — do not rely on `OPM_MODEL_API_KEY` (legacy rollback only).
+With `PEER_OAM_URL` set, configure models and API keys in the OAM console. Host `OPM_MODEL_API_KEY` is not a credential path.
 
 Rebuild with production tags (`opm-api:nas`, `opm-dashboard:nas`) — never smoke tags on NAS.
 
@@ -66,9 +66,9 @@ Rebuild with production tags (`opm-api:nas`, `opm-dashboard:nas`) — never smok
 ## 4. Link a repository
 
 1. **Projects** → **Link GitHub repo**
-2. Select **Hub organization** (from `GET /api/hub/organizations`)
+2. Select **Organization** (from `GET /api/oam/organizations`)
 3. Select **GitHub connector** (listed via ORA; install/manage in OAM → `GET /api/github/connectors`)
-4. Pick a **repository** and submit → `POST /api/projects`
+4. Pick a **repository** and submit → `POST /api/projects` with the family (OAM) project `id`
 
 If no connectors appear, open **Manage in Account Manager** (OAM `/connectors`) and install a GitHub App or PAT for the selected org.
 
@@ -194,8 +194,8 @@ supported path for delivery.
 ## 6. Deliver a task as a pull request
 
 Once an implementation run has recorded file changes (which requires a model
-runner — via OAM resolve when `PEER_OAM_URL` is set, or legacy `OPM_MODEL_API_KEY`
-in [configuration.md](configuration.md)), the
+runner via OAM resolve when `PEER_OAM_URL` is set; see
+[configuration.md](configuration.md)), the
 task detail **Delivery** section lists them and offers **Deliver as pull
 request**. That commits them on `opm/<specId>`, pushes the branch, and opens a
 pull request; the board then shows a **PR #n** badge on the card.
@@ -223,7 +223,7 @@ organization's settings. The live board update can only be proved after that is 
 | `missing_issues_permission` on issue link/push/pull | App lacks Issues write | Grant **Issues** read/write and re-accept the install; response lists `missing` |
 | `issue_not_found` on pull | Issue deleted or transferred | Unlink and attach the new number; the link is kept until you do |
 | Task shows a sync error badge | Last push/pull failed | Read `githubIssueSyncError` on the task or the `github-issue-sync` spec log |
-| `no_changes_produced` on deliver | No run recorded file changes (builtin path, or the model returned none) | Configure OAM credentials (or legacy `OPM_MODEL_API_KEY`) and re-run implementation; check the task's `delivery` log |
+| `no_changes_produced` on deliver | No run recorded file changes (builtin path, or the model returned none) | Configure OAM credentials and re-run implementation; check the task's `delivery` log |
 | `missing_contents_permission` on deliver | App cannot push | Grant **Contents: Read and write**, re-accept the installation permissions |
 | `missing_pull_requests_permission` on deliver | App cannot open pull requests | Grant **Pull requests: Read and write**, re-accept the installation permissions |
 | `push_rejected` on deliver | The delivery branch already exists on the remote with different commits | Re-deliver with a different `branch` in the request body |

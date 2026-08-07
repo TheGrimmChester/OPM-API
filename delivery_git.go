@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	openjobenv "github.com/TheGrimmChester/open-job-env-go"
 )
 
 // Git side of a delivery: branch, stage the exact applied paths, commit, push.
@@ -66,21 +68,21 @@ func (g *gitRunner) ensureAskPass() (string, error) {
 func (g *gitRunner) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = g.dir
-	env := append(os.Environ(),
+	extras := []string{
 		"GIT_TERMINAL_PROMPT=0",
 		"GCM_INTERACTIVE=never",
-	)
+	}
 	if g.token != "" {
 		askPass, err := g.ensureAskPass()
 		if err != nil {
 			return "", err
 		}
-		env = append(env,
+		extras = append(extras,
 			"GIT_ASKPASS="+askPass,
 			"OPM_GIT_ASKPASS_TOKEN="+g.token,
 		)
 	}
-	cmd.Env = env
+	cmd.Env = openjobenv.HostToolEnv(extras...)
 	out, err := cmd.CombinedOutput()
 	text := redactSecret(string(out), g.token)
 	if err != nil {

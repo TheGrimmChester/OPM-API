@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,7 +41,7 @@ func sanitizePathSegment(s string) string {
 
 // ensureTaskWorkspace returns the persistent repo dir for a task session.
 // Clones once; later jobs reuse the same tree.
-func ensureTaskWorkspace(p Project, specID string) (string, error) {
+func ensureTaskWorkspace(ctx context.Context, p Project, specID, userID string) (string, error) {
 	root := taskWorkspaceRoot(p.ID, specID)
 	repo := filepath.Join(root, "repo")
 	if st, err := os.Stat(filepath.Join(repo, ".git")); err == nil && st != nil {
@@ -49,7 +50,7 @@ func ensureTaskWorkspace(p Project, specID string) (string, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
 	}
-	return cloneRepoInto(p, root, "repo")
+	return cloneRepoInto(ctx, p, root, "repo", userID)
 }
 
 // releaseTaskWorkspace removes the task-scoped tree (after done, human gate, or cleanup).
@@ -69,14 +70,11 @@ func cleanupRunnerScratch(runID string) {
 }
 
 // usesTaskWorkspace reports whether a job should mount the persistent task session repo.
-// Review and (for autopilot) qa-fix reuse the session so post-review deliver can
-// open a PR from the same tree coding wrote.
 func usesTaskWorkspace(action string, autopilot bool) bool {
+	_ = autopilot
 	switch action {
-	case "run-implementation", "run-pipeline", "run-review":
+	case "run-implementation", "run-pipeline":
 		return true
-	case "run-qa-fix":
-		return autopilot
 	default:
 		return false
 	}
@@ -84,7 +82,7 @@ func usesTaskWorkspace(action string, autopilot bool) bool {
 
 // taskWorkspaceWriteMount is true when the runner may modify files in the session repo.
 func taskWorkspaceWriteMount(action string) bool {
-	return action == "run-implementation" || action == "run-qa-fix" || action == "run-pipeline"
+	return action == "run-implementation" || action == "run-pipeline"
 }
 
 func hasPendingCodingSubtasks(plan ImplementationPlan) bool {
@@ -129,8 +127,9 @@ func implAutoChainEnabled() bool {
 	}
 }
 
-// implAutoDeliverEnabled reports whether OPM_IMPL_AUTO_DELIVER is on (default on).
-// When enabled, postReviewJob opens a PR after review PASS — not after coding.
+// implAutoDeliverEnabled is retained for callers that still gate optional
+// auto-deliver behaviour. Coding complete parks in review for human deliver —
+// this flag no longer opens a PR after a local review job.
 func implAutoDeliverEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(envOr("OPM_IMPL_AUTO_DELIVER", "1"))) {
 	case "0", "false", "no", "off":

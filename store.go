@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	opentenant "github.com/TheGrimmChester/open-tenant-go"
 	"github.com/google/uuid"
 )
 
@@ -101,13 +102,15 @@ func (s *Store) GetProject(id string) (Project, error) {
 	return Project{}, fmt.Errorf("project not found")
 }
 
-// ListProjectsForOrg returns projects belonging to org. Empty org = unscoped (auth off).
+// ListProjectsForOrg returns projects belonging to org.
+// Empty org + auth off = unscoped (lab). Empty org + auth on = personal
+// empty-org rows only (never the shared default-org bucket).
 func (s *Store) ListProjectsForOrg(org string) ([]Project, error) {
 	all, err := s.ListProjects()
 	if err != nil {
 		return nil, err
 	}
-	if org == "" {
+	if org == "" && !opentenant.AuthEnforced() {
 		return all, nil
 	}
 	out := make([]Project, 0, len(all))
@@ -167,6 +170,123 @@ func (s *Store) CreateProject(in Project) (Project, error) {
 		UpdatedAt:      now,
 	}
 	if p.HTMLURL == "" {
+		p.HTMLURL = "https://github.com/" + ownerRepo
+	}
+	f.Projects = append(f.Projects, p)
+	if err := s.writeJSON(s.registryPath(), f); err != nil {
+		return Project{}, err
+	}
+	if err := s.ensureLayoutLocked(p); err != nil {
+		return Project{}, err
+	}
+	return p, nil
+}
+
+// EnsureProject upserts a board-registry row keyed by a caller-provided id
+// (normally the OAM directory project id). Selecting a family project IS the
+// board: we provision an empty board when none exists yet.
+//
+// Matching order:
+//  1. Exact id → return (optionally enrich blank GitHub fields from input)
+//  2. Same ownerRepo under a different id → return that row (avoid duplicates)
+//  3. Insert with the provided id (ownerRepo/connector may be blank for board-only)
+func (s *Store) EnsureProject(in Project) (Project, error) {
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		return Project{}, fmt.Errorf("id required")
+	}
+	ownerRepo := normalizeOwnerRepo(in.OwnerRepo)
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		if ownerRepo != "" {
+			parts := strings.SplitN(ownerRepo, "/", 2)
+			name = parts[len(parts)-1]
+		} else {
+			name = id
+		}
+	}
+	connectorID := strings.TrimSpace(in.ConnectorID)
+	orgID := normalizeWriteOrg(in.OrganizationID)
+	htmlURL := strings.TrimSpace(in.HTMLURL)
+	defaultBranch := nz(strings.TrimSpace(in.DefaultBranch), "main")
+	githubRepoID := strings.TrimSpace(in.GithubRepoID)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var f projectsFile
+	if err := s.readJSON(s.registryPath(), &f); err != nil {
+		return Project{}, err
+	}
+	for i := range f.Projects {
+		p := &f.Projects[i]
+		if p.ID != id {
+			continue
+		}
+		changed := false
+		if ownerRepo != "" && normalizeOwnerRepo(p.OwnerRepo) == "" {
+			p.OwnerRepo = ownerRepo
+			changed = true
+		}
+		if connectorID != "" && strings.TrimSpace(p.ConnectorID) == "" {
+			p.ConnectorID = connectorID
+			changed = true
+		}
+		if githubRepoID != "" && strings.TrimSpace(p.GithubRepoID) == "" {
+			p.GithubRepoID = githubRepoID
+			changed = true
+		}
+		if htmlURL != "" && strings.TrimSpace(p.HTMLURL) == "" {
+			p.HTMLURL = htmlURL
+			changed = true
+		}
+		if strings.TrimSpace(p.Name) == "" && name != "" {
+			p.Name = name
+			changed = true
+		}
+		// Org accounts: refresh OrganizationID when the caller write org is
+		// non-empty and the stored org differs or is empty. Personal stays empty.
+		if orgID != "" {
+			storedOrg := normalizeWriteOrg(p.OrganizationID)
+			if storedOrg == "" || storedOrg != orgID {
+				p.OrganizationID = orgID
+				changed = true
+			}
+		}
+		if changed {
+			p.UpdatedAt = nowUTC()
+			if err := s.writeJSON(s.registryPath(), f); err != nil {
+				return Project{}, err
+			}
+		}
+		if err := s.ensureLayoutLocked(*p); err != nil {
+			return Project{}, err
+		}
+		return *p, nil
+	}
+	if ownerRepo != "" {
+		for _, p := range f.Projects {
+			if normalizeOwnerRepo(p.OwnerRepo) == ownerRepo {
+				if err := s.ensureLayoutLocked(p); err != nil {
+					return Project{}, err
+				}
+				return p, nil
+			}
+		}
+	}
+	now := nowUTC()
+	p := Project{
+		ID:             id,
+		Name:           name,
+		OwnerRepo:      ownerRepo,
+		GithubRepoID:   githubRepoID,
+		ConnectorID:    connectorID,
+		OrganizationID: orgID,
+		HTMLURL:        htmlURL,
+		DefaultBranch:  defaultBranch,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if p.HTMLURL == "" && ownerRepo != "" {
 		p.HTMLURL = "https://github.com/" + ownerRepo
 	}
 	f.Projects = append(f.Projects, p)
@@ -734,8 +854,8 @@ func (s *Store) GetTaskValidActions(projectID, specID string) (TaskValidActions,
 	stuckCount := countStuckOrFailed(plan)
 	out.Planning = !paused && (status == "backlog" || status == "queue" || status == "human_review")
 	out.Implementation = !paused && (status == "queue" || status == "in_progress") && approved
-	out.Review = !paused && (status == "in_progress" || status == "review")
-	out.QaFix = !paused && (status == "review" || status == "in_progress")
+	out.Review = false // deep review is ORA's domain; review column is human parking
+	out.QaFix = false
 	out.Approve = status == "human_review"
 	out.FollowupPlanning = !paused && hasPlan && (status == "queue" || status == "in_progress" || status == "review" || status == "done")
 	out.GenerateChangelog = true
@@ -978,6 +1098,9 @@ func (s *Store) CreateJob(projectID, action, specID, runnerImage string) (Job, e
 // CreateJobWithOrigin creates a job carrying an acting identity and, when the
 // origin came from a parent job, that parent's pinned model binding.
 func (s *Store) CreateJobWithOrigin(projectID, action, specID, runnerImage string, origin JobOrigin) (Job, error) {
+	if err := unsupportedReviewAction(action); err != nil {
+		return Job{}, err
+	}
 	var created Job
 	agentKey := agentKeyForAction(action)
 	err := s.withProject(projectID, func(p Project) error {
@@ -1038,8 +1161,6 @@ func mapActionToState(action string) string {
 		return "planning"
 	case "run-implementation", "skip-to-phase", "run-pipeline":
 		return "building"
-	case "run-qa-fix", "run-review":
-		return "qa"
 	case "generate-changelog":
 		return "planning"
 	default:

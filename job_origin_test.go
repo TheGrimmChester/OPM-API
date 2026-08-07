@@ -37,7 +37,7 @@ func TestPinnedModelCarriesWithinAPhase(t *testing.T) {
 	}
 }
 
-// Different phase (coding → review): the pin must NOT carry, or every phase would
+// Different phase (coding → planning): the pin must NOT carry, or every phase would
 // run the model configured for the first one and per-agent models would be a lie.
 func TestPinnedModelDoesNotCrossPhases(t *testing.T) {
 	parent := Job{
@@ -47,11 +47,11 @@ func TestPinnedModelDoesNotCrossPhases(t *testing.T) {
 		ResolvedAgentKey: agentKeyCoding,
 	}
 	origin := jobOriginFrom(parent)
-	if origin.pinnedFor(agentKeyReview) {
-		t.Fatal("a coding pin must not satisfy the review phase")
+	if origin.pinnedFor(agentKeyPlanning) {
+		t.Fatal("a coding pin must not satisfy the planning phase")
 	}
-	if origin.pinnedFor(agentKeyQAFix) {
-		t.Fatal("a coding pin must not satisfy the qa_fix phase")
+	if origin.pinnedFor(agentKeyIdeation) {
+		t.Fatal("a coding pin must not satisfy the ideation phase")
 	}
 	// An empty agent key can never be satisfied by a pin either — that would let
 	// a non-AI action inherit a model.

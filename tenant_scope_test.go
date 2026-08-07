@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	openauth "github.com/TheGrimmChester/open-auth-go"
-	opentenant "github.com/TheGrimmChester/open-tenant-go"
 )
 
 func TestJobOrgFromJWT(t *testing.T) {
@@ -47,8 +46,11 @@ func TestJobOrgFromJWT(t *testing.T) {
 
 	t.Run("personal_account", func(t *testing.T) {
 		tok := mint(openauth.AccountTypePersonal, "")
-		if got := jobOrgFromJWT(reqWithToken(tok)); got != opentenant.DefaultOrganizationID {
-			t.Fatalf("got %q want %q", got, opentenant.DefaultOrganizationID)
+		if got := jobOrgFromJWT(reqWithToken(tok)); got != "" {
+			t.Fatalf("got %q want empty (never invent default-org)", got)
+		}
+		if got := resolveRequestOrg(reqWithToken(tok)); got != "" {
+			t.Fatalf("resolveRequestOrg got %q want empty", got)
 		}
 	})
 

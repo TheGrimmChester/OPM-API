@@ -15,11 +15,15 @@ func initTenantAuth() {
 }
 
 // resolveRequestOrg returns the organization this request may access.
-// When auth is enforced, empty/"all" collapse to default-org (WriteTenant).
+// Never invents default-org. Personal JWTs (and impersonated-personal) pin
+// empty org. When auth is enforced, empty/"all" stay empty (WriteTenant).
 // When auth is off, empty/"all" mean unscoped ("").
 // Prefer JWT org_id for organization accounts so jobs are not stamped from
 // headers alone.
 func resolveRequestOrg(r *http.Request) string {
+	if claims := claimsFromRequestToken(r); claims != nil && openauth.IsPersonalAccount(claims) {
+		return ""
+	}
 	if org := jobOrgFromJWT(r); org != "" {
 		return org
 	}
@@ -42,15 +46,16 @@ func resolveRequestOrg(r *http.Request) string {
 }
 
 // jobOrgFromJWT reads the acting user's home organization from validated JWT
-// claims. Personal accounts return default-org for storage; organization accounts
-// return the fixed JWT org_id. Unbound legacy admins fall back to headers.
+// claims. Personal accounts return "" (never default-org). Organization
+// accounts return the fixed JWT org_id. Unbound legacy admins fall back to
+// headers via resolveRequestOrg.
 func jobOrgFromJWT(r *http.Request) string {
 	claims := claimsFromRequestToken(r)
 	if claims == nil {
 		return ""
 	}
 	if openauth.IsPersonalAccount(claims) {
-		return opentenant.DefaultOrganizationID
+		return ""
 	}
 	if org := strings.TrimSpace(claims.OrgID); org != "" {
 		return org
@@ -60,23 +65,36 @@ func jobOrgFromJWT(r *http.Request) string {
 
 func projectOrgID(p Project) string {
 	org := strings.TrimSpace(p.OrganizationID)
-	if org == "" || org == opentenant.All {
-		return opentenant.DefaultOrganizationID
+	if org == opentenant.All {
+		return ""
 	}
 	return org
 }
 
+// projectInOrg reports whether project p belongs to org.
+// Empty org under auth matches only empty-org (personal) rows — never the
+// shared default-org bucket and never "all projects". Auth off + empty org
+// remains unscoped (lab mode).
 func projectInOrg(p Project, org string) bool {
+	org = strings.TrimSpace(org)
+	if org == opentenant.All {
+		org = ""
+	}
 	if org == "" {
-		return true
+		if !opentenant.AuthEnforced() {
+			return true
+		}
+		return projectOrgID(p) == ""
 	}
 	return projectOrgID(p) == org
 }
 
+// normalizeWriteOrg keeps empty/"all" as empty — never invents default-org.
+// Explicit default-org is preserved when the caller selects it for legacy rows.
 func normalizeWriteOrg(org string) string {
 	org = strings.TrimSpace(org)
 	if org == "" || org == opentenant.All {
-		return opentenant.DefaultOrganizationID
+		return ""
 	}
 	return org
 }

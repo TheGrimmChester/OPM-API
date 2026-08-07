@@ -54,7 +54,7 @@ func handleGitHubMilestones(w http.ResponseWriter, r *http.Request, store *Store
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 		defer cancel()
-		out, err := peerListMilestones(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo)
+		out, err := peerListMilestones(ctx, p.OrganizationID, actorFromRequest(r), p.ConnectorID, p.OwnerRepo)
 		if err != nil {
 			writeError(w, 502, "ora milestones: "+err.Error())
 			return
@@ -84,7 +84,7 @@ func handleGitHubMilestones(w http.ResponseWriter, r *http.Request, store *Store
 		title := strings.TrimSpace(body.Title)
 		msTitle, msURL := "", ""
 		if number > 0 || title != "" || body.CreateIfMissing {
-			up, err := peerUpsertMilestone(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo,
+			up, err := peerUpsertMilestone(ctx, p.OrganizationID, actorFromRequest(r), p.ConnectorID, p.OwnerRepo,
 				number, title, body.Description, body.State)
 			if err != nil {
 				writeError(w, 502, "ora milestone upsert: "+err.Error())
@@ -163,7 +163,7 @@ func handleGitHubProjects(w http.ResponseWriter, r *http.Request, store *Store, 
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 		defer cancel()
-		out, err := peerListGitHubProjects(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo)
+		out, err := peerListGitHubProjects(ctx, p.OrganizationID, actorFromRequest(r), p.ConnectorID, p.OwnerRepo)
 		if err != nil {
 			writeError(w, 502, "ora projects: "+err.Error())
 			return
@@ -250,7 +250,7 @@ func handleGitHubProjects(w http.ResponseWriter, r *http.Request, store *Store, 
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
 		specID := strings.TrimSpace(body.SpecID)
-		out, err := peerUpsertProjectItem(ctx, p.OrganizationID, p.ConnectorID, ghProjectID, itemID, title, body.Body, statusHint)
+		out, err := peerUpsertProjectItem(ctx, p.OrganizationID, actorFromRequest(r), p.ConnectorID, ghProjectID, itemID, title, body.Body, statusHint)
 		if err != nil {
 			code, status := projectSyncHTTPStatus(err)
 			recordProjectSyncFailure(store, p, specID, "sync-item", status, err.Error())
@@ -353,7 +353,7 @@ func handleGitHubSyncTask(w http.ResponseWriter, r *http.Request, store *Store, 
 
 	// syncTaskProjectItem records the outcome on the task and in the spec log, so a
 	// board that did not update is visible afterwards rather than only in this reply.
-	outcome := syncTaskProjectItem(ctx, store, p, t, "sync-task")
+	outcome := syncTaskProjectItem(ctx, store, p, t, "sync-task", actorFromRequest(r))
 	result["projectSync"] = outcome.payload()
 	result["projectSync"].(map[string]interface{})["ok"] = outcome.ok()
 	t = outcome.Task
@@ -363,7 +363,7 @@ func handleGitHubSyncTask(w http.ResponseWriter, r *http.Request, store *Store, 
 		if t.Status == "done" {
 			state = "closed"
 		}
-		up, err := peerUpsertMilestone(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo,
+		up, err := peerUpsertMilestone(ctx, p.OrganizationID, actorFromRequest(r), p.ConnectorID, p.OwnerRepo,
 			t.GithubMilestoneNumber, t.GithubMilestoneTitle, "", state)
 		if err != nil {
 			result["milestoneSync"] = map[string]interface{}{"ok": false, "error": err.Error()}
@@ -384,7 +384,7 @@ func handleGitHubSyncTask(w http.ResponseWriter, r *http.Request, store *Store, 
 }
 
 // syncTaskGitHubAfterMove best-effort updates Projects v2 Status when a linked task moves.
-func syncTaskGitHubAfterMove(store *Store, p Project, t Task) {
+func syncTaskGitHubAfterMove(store *Store, p Project, t Task, userID string) {
 	if !peerORAConfigured() {
 		return
 	}
@@ -400,7 +400,7 @@ func syncTaskGitHubAfterMove(store *Store, p Project, t Task) {
 		defer cancel()
 		// The move response has already been written, so the failure cannot be
 		// returned — but it is persisted on the task and logged rather than dropped.
-		out, err := peerSetProjectItemStatus(ctx, p.OrganizationID, p.ConnectorID, ghProjectID, t.GithubProjectItemID, t.Status)
+		out, err := peerSetProjectItemStatus(ctx, p.OrganizationID, userID, p.ConnectorID, ghProjectID, t.GithubProjectItemID, t.Status)
 		if err != nil {
 			_, status := projectSyncHTTPStatus(err)
 			recordProjectSyncFailure(store, p, t.SpecID, "move column", status, err.Error())

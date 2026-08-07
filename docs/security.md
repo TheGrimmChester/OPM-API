@@ -14,9 +14,13 @@ When `OPA_AUTH_REQUIRED=1`, send **`X-Organization-ID`** / **`X-Project-ID`** on
 
 ## Job sandbox
 
-Task-automation runners must not receive `JWT_SECRET`, service JWTs, or connector secrets. Use `Open-Job-Go` scrubbing and hardened `docker run` (cap-drop, read-only, no docker.sock in jobs).
+Task-automation runners must not receive `JWT_SECRET`, service JWTs, connector secrets, or `REDIS_URL`. Use **Open-Job-Env-Go** `HostToolEnv` / phase allowlists and **Open-Job-Go** scrubbing with hardened `docker run` (cap-drop, read-only, no docker.sock in jobs).
 
-When `OPA_AUTH_REQUIRED=1`, model-backed jobs require **`PEER_OAM_URL`**. The legacy deployment-wide `OPM_MODEL_API_KEY` / `CURSOR_API_KEY` path is refused for AI phases so tenants cannot share one key.
+NAS default: `OPM_RUNNER_NETWORK=internal+proxy` (per-job sealed network + `open-egress-proxy`). Break-glass: `OPM_RUNNER_NETWORK=bridge`.
+
+When `OPA_AUTH_REQUIRED=1`, model-backed jobs require **`PEER_OAM_URL`**. Prefer OAM **credential lease** (`/api/internal/job-credentials/lease` → one-shot redeem) over holding plaintext keys; fall back to `/api/agents/resolve`. Host `OPM_MODEL_API_KEY` / `CURSOR_API_KEY` are not used as credentials.
+
+Peer calls during a job use a short-lived **job token** (`sub=job`, minted via OAM) with `aud=ora-api` rather than a long-lived service JWT when available.
 
 ## Secrets on disk
 

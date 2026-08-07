@@ -11,7 +11,8 @@ import (
 
 func registerDiscoveryMux(mux *http.ServeMux, authView func(string, http.HandlerFunc)) {
 	authView("/api/hub/status", handleHubStatus)
-	authView("/api/hub/organizations", handleHubOrganizations)
+	authView("/api/oam/organizations", handleOAMOrganizations)
+	authView("/api/oam/projects", handleOAMProjects)
 	authView("/api/github/connectors", handleGitHubConnectors)
 	mux.HandleFunc("/api/github/connectors/", func(w http.ResponseWriter, r *http.Request) {
 		h := handleGitHubConnectorSub
@@ -29,21 +30,21 @@ func handleHubStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	credHome := "env"
-	note := "OPM links to OPA-Hub for identity/orgs when PEER_OPA_URL is set. No local folder projects."
+	note := "OPM links to OAM for organization/project directory when PEER_OAM_URL is set. No local folder projects."
 	switch {
 	case oamConfigured():
 		credHome = "oam"
-		note = "OPM links to OPA-Hub for identity/orgs, OAM for connector/credential storage and model bindings, and ORA for GitHub SCM protocol (list/clone/PR). No local folder projects."
+		note = "OPM links to OAM for organizations, projects, connectors/credentials and model bindings, and ORA for GitHub SCM protocol (list/clone/PR). No local folder projects."
 	case peerORAConfigured():
 		credHome = "ora"
-		note = "OPM links to ORA for GitHub SCM protocol (list/clone/PR). Set PEER_OAM_URL so connector/credential storage and model bindings resolve from OAM. No local folder projects."
+		note = "OPM links to ORA for GitHub SCM protocol (list/clone/PR). Set PEER_OAM_URL so organizations, connectors/credentials and model bindings resolve from OAM. No local folder projects."
 	}
 	out := map[string]interface{}{
 		"peer_opa_configured": peerOPAConfigured(),
 		"peer_ora_configured": peerORAConfigured(),
 		"peer_oam_configured": oamConfigured(),
 		"credentials_home":    credHome,
-		"hub_role":            "identity_and_tenancy",
+		"hub_role":            "optional_peer",
 		"note":                note,
 	}
 	if peerOPAConfigured() {
@@ -58,33 +59,53 @@ func handleHubStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-func handleHubOrganizations(w http.ResponseWriter, r *http.Request) {
+func handleOAMOrganizations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, 405, "method not allowed")
 		return
 	}
-	if !peerOPAConfigured() {
+	base := oamPeerURL()
+	if base == "" {
 		writeJSON(w, map[string]interface{}{
-			"organizations": []map[string]interface{}{
-				{"id": "default-org", "agent_count": 0, "source": "local_default"},
-			},
-			"note": "PEER_OPA_URL unset — returning default-org only. Set PEER_OPA_URL for hub tenancy discovery.",
+			"organizations": []map[string]interface{}{},
+			"note":          "PEER_OAM_URL unset — no OAM organization discovery. Set PEER_OAM_URL to list organizations.",
 		})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	out, err := peerHubOrganizations(ctx)
+	raw, status, err := proxyOAMProjectsGET(ctx, strings.TrimRight(base, "/")+"/api/organizations", r)
 	if err != nil {
-		writeError(w, 502, "hub unavailable: "+err.Error())
+		writeError(w, 502, "oam unavailable: "+err.Error())
 		return
 	}
-	writeJSON(w, out)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(raw)
 }
 
 func handleGitHubConnectors(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, 405, "method not allowed")
+		return
+	}
+	// Prefer OAM user-JWT proxy so personal (empty-org, user-scoped) connectors
+	// are visible — ORA connectors:read with a bare service JWT hides them.
+	if base := oamPeerURL(); base != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		target := strings.TrimRight(base, "/") + "/api/connectors"
+		if q := r.URL.RawQuery; q != "" {
+			target += "?" + q
+		}
+		raw, status, err := proxyOAMProjectsGET(ctx, target, r)
+		if err != nil {
+			writeError(w, 502, "oam unavailable: "+err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write(raw)
 		return
 	}
 	if !peerORAConfigured() {
@@ -94,7 +115,7 @@ func handleGitHubConnectors(w http.ResponseWriter, r *http.Request) {
 	orgID := resolveRequestOrg(r)
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	out, err := peerListConnectors(ctx, orgID)
+	out, err := peerListConnectors(ctx, orgID, actorFromRequest(r))
 	if err != nil {
 		writeError(w, 502, "ora unavailable: "+err.Error())
 		return
@@ -118,7 +139,7 @@ func handleGitHubConnectorSub(w http.ResponseWriter, r *http.Request) {
 	orgID := resolveRequestOrg(r)
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	out, err := peerListConnectorRepos(ctx, orgID, connectorID)
+	out, err := peerListConnectorRepos(ctx, orgID, actorFromRequest(r), connectorID)
 	if err != nil {
 		writeError(w, 502, "ora unavailable: "+err.Error())
 		return
@@ -135,8 +156,10 @@ func orgHeader(r *http.Request) string {
 }
 
 // decodeLinkProjectBody parses POST /api/projects for GitHub link payloads.
+// The board registry id must be the OAM directory project id (body.id or X-Project-ID).
 func decodeLinkProjectBody(r *http.Request) (Project, error) {
 	var body struct {
+		ID             string `json:"id"`
 		Name           string `json:"name"`
 		OwnerRepo      string `json:"ownerRepo"`
 		RepoFullName   string `json:"repo_full_name"`
@@ -159,6 +182,7 @@ func decodeLinkProjectBody(r *http.Request) (Project, error) {
 		owner = body.RepoFullName
 	}
 	return Project{
+		ID:             strings.TrimSpace(body.ID),
 		Name:           body.Name,
 		OwnerRepo:      owner,
 		GithubRepoID:   body.GithubRepoID,

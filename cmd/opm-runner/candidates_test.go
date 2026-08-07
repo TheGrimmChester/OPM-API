@@ -53,35 +53,18 @@ func TestLoadCandidatesReadsTheNumberedList(t *testing.T) {
 	}
 }
 
-// A runner image deployed against a control plane that does not send candidates —
-// or a deployment with PEER_OAM_URL unset — must behave exactly as it did before.
-func TestNoCandidateVarsFallsBackToTheLegacyEnv(t *testing.T) {
+// Bare host credentials must not synthesize a candidate — only numbered OAM
+// candidate env vars from the control plane count.
+func TestNoCandidateVarsYieldsEmpty(t *testing.T) {
 	clearCandidateEnv(t)
 	t.Setenv("CURSOR_API_KEY", "crsr_legacy")
 	t.Setenv("OPM_MODEL", "auto")
-
-	got := loadCandidates()
-	if len(got) != 1 {
-		t.Fatalf("got %d candidates, want the single legacy one", len(got))
-	}
-	if got[0].Kind != kindCLICursor || got[0].APIKey != "crsr_legacy" || got[0].Model != "auto" {
-		t.Fatalf("legacy candidate = %+v", got[0])
-	}
-}
-
-func TestLegacyOpenAIProviderMapsToTheOpenAIKind(t *testing.T) {
-	clearCandidateEnv(t)
 	t.Setenv("OPM_MODEL_API_KEY", "sk-legacy")
 	t.Setenv("OPM_MODEL_PROVIDER", "openai")
-	t.Setenv("OPM_MODEL_BASE_URL", "https://api.example.com/v1")
-	t.Setenv("OPM_MODEL", "gpt-4o")
 
 	got := loadCandidates()
-	if len(got) != 1 || got[0].Kind != kindAPIOpenAI {
-		t.Fatalf("candidates = %+v", got)
-	}
-	if got[0].BaseURL != "https://api.example.com/v1" {
-		t.Fatalf("base url = %q", got[0].BaseURL)
+	if len(got) != 0 {
+		t.Fatalf("got %d candidates from bare env, want 0: %+v", len(got), got)
 	}
 }
 

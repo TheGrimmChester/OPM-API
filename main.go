@@ -37,6 +37,7 @@ func main() {
 		log.Fatalf("store: %v", err)
 	}
 
+	initSecurityCache()
 	initAuthGate()
 	initTenantAuth()
 	authRequired := authRequiredEnv()
@@ -51,12 +52,10 @@ func main() {
 	// phase. Best-effort and logged: without it a newly added job kind would
 	// resolve against the product default with nobody noticing.
 	if oamConfigured() {
-		log.Printf("oam: %s — models and API keys resolve per job (OPM_MODEL* no longer participate)", oamPeerURL())
+		log.Printf("oam: %s — models and API keys resolve per job from OAM", oamPeerURL())
 		go publishAgentCatalog(context.Background())
-	} else if authRequired {
-		log.Printf("oam: PEER_OAM_URL unset — model-backed jobs will fail until OAM is configured (legacy keys disabled when OPA_AUTH_REQUIRED=1)")
 	} else {
-		log.Printf("oam: PEER_OAM_URL unset — using the legacy OPM_MODEL*/CURSOR_API_KEY environment path")
+		log.Printf("oam: PEER_OAM_URL unset — model-backed jobs will fail until OAM is configured")
 	}
 
 	mux := http.NewServeMux()

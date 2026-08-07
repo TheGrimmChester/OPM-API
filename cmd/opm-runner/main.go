@@ -145,9 +145,8 @@ func main() {
 	outDir := envOr("OPM_OUT_DIR", "/out")
 	_ = os.MkdirAll(outDir, 0o755)
 
-	// The ordered endpoint list OAM resolved for this job, or a single candidate
-	// synthesised from the legacy OPM_MODEL*/CURSOR_API_KEY environment when the
-	// control plane did not supply one.
+	// The ordered endpoint list OAM resolved for this job (injected by the control
+	// plane). No synthesize-from-bare-env fallback.
 	cands := loadCandidates()
 	if len(cands) == 0 {
 		emit(outDir, runnerResult{
@@ -160,9 +159,8 @@ func main() {
 
 	model := modelForAction(in.Action)
 	// The model comes from the resolved candidate when there is one: OAM resolved
-	// it per agent for the acting user, and modelForAction is the legacy
-	// deployment-wide fallback. Preferring the env here would reintroduce exactly
-	// the global-variable behaviour the binding replaced.
+	// it per agent for the acting user. Preferring a bare env model here would
+	// reintroduce deployment-wide credentials.
 	if m := strings.TrimSpace(cands[0].Model); m != "" {
 		model = m
 	}
@@ -189,13 +187,6 @@ func main() {
 	res.EndpointKind = used.Kind
 	res.Attempt = used.Index
 	emit(outDir, res)
-}
-
-func modelAPIKey() string {
-	if k := strings.TrimSpace(os.Getenv("OPM_MODEL_API_KEY")); k != "" {
-		return k
-	}
-	return strings.TrimSpace(os.Getenv("CURSOR_API_KEY"))
 }
 
 func useOpenAIProvider() bool {
@@ -414,8 +405,6 @@ func modelForAction(action string) string {
 		return phaseModel("OPM_MODEL_PLANNING")
 	case "run-implementation":
 		return phaseModel("OPM_MODEL_CODING")
-	case "run-review":
-		return phaseModel("OPM_MODEL_REVIEW")
 	case "run-ideation":
 		return phaseModel("OPM_MODEL_IDEATION")
 	case "run-roadmap-discovery":
@@ -584,11 +573,6 @@ func parseModelContent(action, model, content string) runnerResult {
 		if strings.TrimSpace(res.SpecMarkdown) == "" && len(res.Plan) == 0 {
 			res.Mode = "fallback"
 			res.Reason = "model JSON missing specMarkdown and plan"
-		}
-	case "run-review":
-		if strings.TrimSpace(res.ReviewMarkdown) == "" && res.ReviewPass == nil {
-			res.Mode = "fallback"
-			res.Reason = "model JSON missing reviewMarkdown and reviewPass"
 		}
 	case "run-implementation":
 		// An implementation run that produced no files stays mode=model — the plan

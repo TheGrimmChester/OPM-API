@@ -115,7 +115,7 @@ func builtinRoadmapPublish(store *Store, j Job) (string, error) {
 		if pr := strings.TrimSpace(f.Priority); pr != "" {
 			labels = append(labels, "priority:"+pr)
 		}
-		res, cerr := peerCreateIssue(ctx, j.OrganizationID, p.ConnectorID, p.OwnerRepo,
+		res, cerr := peerCreateIssue(ctx, j.OrganizationID, j.ActorUsername, p.ConnectorID, p.OwnerRepo,
 			title, body, labels, f.GithubMilestoneNumber)
 		if cerr != nil {
 			failures = append(failures, fid+": "+truncateRunes(cerr.Error(), 100))

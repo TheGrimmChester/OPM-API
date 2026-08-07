@@ -246,7 +246,7 @@ func TestModelForActionDefaultsToAuto(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	for _, action := range []string{
-		"run-planning", "run-implementation", "run-review",
+		"run-planning", "run-implementation",
 		"run-ideation", "run-roadmap-discovery", "run-roadmap-features",
 	} {
 		if modelForAction(action) != "auto" {

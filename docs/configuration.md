@@ -10,21 +10,12 @@
 | `OPM_RUNNER_TAG` | `smoke` (NAS: `nas`) | Tag for `opm-runner-task` image name — prefer `nas` on NAS, never smoke |
 | `OPM_FORCE_BUILTIN` | empty | When `1`/`true`, skip `docker run` and use the in-process artifact writer only |
 | `OPM_INSTANCE` | `default` | Label value for `opm.instance` on runner containers |
-| `PEER_OAM_URL` | empty | **OAM** base URL. When set, each job resolves model **and** API key from OAM (`creds:resolve`); `OPM_MODEL*` / `CURSOR_API_KEY` no longer participate. Unset = legacy env path below. |
-| `OPM_MODEL_API_KEY` | empty | **Legacy** (only when `PEER_OAM_URL` unset). API key for Cursor Agent CLI or OpenAI-compatible chat inside `opm-runner-task`. When unset, builtin artifacts. Never commit — compose `.env` only. |
-| `OPM_MODEL_BASE_URL` | `https://api.openai.com/v1` | **Legacy** base URL for `/chat/completions` when `OPM_MODEL_PROVIDER=openai`. |
-| `OPM_MODEL` | `auto` | **Legacy** default model id for all phases. |
-| `OPM_MODEL_PLANNING` | `auto` | **Legacy** planning jobs (`OPM_MODEL` when unset). |
-| `OPM_MODEL_CODING` | `auto` | **Legacy** implementation jobs. |
-| `OPM_MODEL_REVIEW` | `auto` | **Legacy** review jobs. |
-| `OPM_MODEL_IDEATION` | `auto` | **Legacy** `run-ideation`. |
-| `OPM_MODEL_ROADMAP_DISCOVERY` | `auto` | **Legacy** `run-roadmap-discovery`. |
-| `OPM_MODEL_ROADMAP_FEATURES` | `auto` | **Legacy** `run-roadmap-features`. |
+| `PEER_OAM_URL` | empty | **OAM** base URL (required for model-backed jobs). Each job resolves model **and** API key from OAM (`creds:resolve`). Host `OPM_MODEL*` / `CURSOR_API_KEY` are not used as credentials. |
 | `OPM_DELIVERY_BRANCH_PREFIX` | `opm` | Branch namespace for delivered task branches (`<prefix>/<specId>`). Empty means no prefix. |
 | `OPM_DELIVERY_MAX_FILES` | `50` | Maximum files a single delivery may commit. |
 | `OPM_DELIVERY_MAX_BYTES` | `2097152` | Maximum total change-set bytes a single delivery may commit. |
-| `OPM_IMPL_AUTO_CHAIN` | `1` | When truthy, a successful `run-implementation` enqueues the next pending coding subtask (same task workspace), or `run-review` when coding is complete. Set `0`/`false` to require manual re-enqueue. |
-| `OPM_IMPL_AUTO_DELIVER` | `1` | When truthy and ORA is linked, after automated review **PASS** (and all plan subtasks complete) auto-runs delivery (commit/push/PR) from the task workspace. Set `0`/`false` to deliver manually. Coding complete alone does not open a PR. |
+| `OPM_IMPL_AUTO_CHAIN` | `1` | When truthy, a successful `run-implementation` enqueues the next pending coding subtask (same task workspace), or parks the task in `review` for human approve/deliver when coding is complete. Set `0`/`false` to require manual re-enqueue of coding steps. |
+| `OPM_IMPL_AUTO_DELIVER` | `1` | Reserved; delivery is human-triggered via `POST …/deliver` after coding parks in `review`. |
 | `OPM_GIT_AUTHOR_NAME` | `opm-api` | Committer name on delivery commits. |
 | `OPM_GIT_AUTHOR_EMAIL` | `opm-api@localhost` | Committer email on delivery commits. |
 | `OPM_RUNNER_NETWORK` | `bridge` | Docker network used when a model key is present (replaces hardened `none` so the runner can reach the model API). |
@@ -40,9 +31,7 @@
 
 ## Models and API keys
 
-**Primary (family stacks):** set `PEER_OAM_URL`. Configure providers and per-agent bindings in the OAM console (Agents & Models). Jobs fail closed with `credential_unavailable` when the org has no key.
-
-**Legacy rollback:** leave `PEER_OAM_URL` empty and set `OPM_MODEL_API_KEY` (or `CURSOR_API_KEY`) plus optional `OPM_MODEL*` phase overrides.
+**Required:** set `PEER_OAM_URL`. Configure providers and per-agent bindings in the OAM console (Agents & Models). Jobs fail closed with `credential_unavailable` when the org has no key. Host `OPM_MODEL*` / `CURSOR_API_KEY` are not credentials — the control plane injects resolved OAM keys into the runner container env only.
 
 ### Runner CLI overrides (`opm-runner-task`)
 

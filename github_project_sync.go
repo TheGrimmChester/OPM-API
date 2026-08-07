@@ -169,7 +169,7 @@ type projectSyncOutcome struct {
 //
 // It never returns a bare nil for a sync that did not happen: Status always says
 // what became of it.
-func syncTaskProjectItem(ctx context.Context, store *Store, p Project, t Task, op string) projectSyncOutcome {
+func syncTaskProjectItem(ctx context.Context, store *Store, p Project, t Task, op, userID string) projectSyncOutcome {
 	if !peerORAConfigured() {
 		return projectSyncOutcome{
 			Status: projectSyncPeerNotConfig,
@@ -196,7 +196,7 @@ func syncTaskProjectItem(ctx context.Context, store *Store, p Project, t Task, o
 		}
 	}
 
-	out, err := peerUpsertProjectItem(ctx, p.OrganizationID, p.ConnectorID, ghProjectID,
+	out, err := peerUpsertProjectItem(ctx, p.OrganizationID, userID, p.ConnectorID, ghProjectID,
 		t.GithubProjectItemID, t.Title, t.Description, t.Status)
 	if err != nil {
 		_, status := projectSyncHTTPStatus(err)
@@ -285,14 +285,14 @@ func taskTextChanged(prev, next Task) bool {
 // syncTaskProjectAfterEdit re-syncs a task whose title or description changed.
 // The caller's edit already succeeded, so this cannot fail the request — but the
 // outcome is persisted on the task and logged, and returned for the response.
-func syncTaskProjectAfterEdit(store *Store, p Project, t Task) projectSyncOutcome {
+func syncTaskProjectAfterEdit(store *Store, p Project, t Task, userID string) projectSyncOutcome {
 	if t.GithubProjectItemID == "" {
 		return projectSyncOutcome{Status: projectSyncNoProjectBound, Task: t,
 			Reason: "task is not bound to a board item"}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return syncTaskProjectItem(ctx, store, p, t, "push title/description")
+	return syncTaskProjectItem(ctx, store, p, t, "push title/description", userID)
 }
 
 // handleProjectUnbind removes the project-level Projects v2 binding.

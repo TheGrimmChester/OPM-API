@@ -21,12 +21,8 @@ func applyRunnerResult(store *Store, j Job, rr RunnerResult, taskWorkDir string)
 	case "run-implementation":
 		msg, err := applyModelImplementation(store, j, rr, taskWorkDir)
 		return true, msg, err
-	case "run-review":
-		msg, err := applyModelReview(store, j, rr)
-		return true, msg, err
-	case "run-qa-fix":
-		msg, err := applyModelQaFix(store, j, rr, taskWorkDir)
-		return true, msg, err
+	case "run-review", "run-qa-fix":
+		return true, "Deep review is owned by ORA; local run-review/run-qa-fix are gone.", unsupportedReviewAction(j.Action)
 	case "run-ideation":
 		if len(rr.Ideas) == 0 {
 			return false, "", nil
@@ -205,75 +201,6 @@ func recordImplementationChangeSet(store *Store, j Job, rr RunnerResult, taskWor
 		fmt.Sprintf("[%s] merged %d file change(s) into session change set: %s\n",
 			j.RunID, len(cs.Files), strings.Join(cs.paths(), ", ")))
 	return fmt.Sprintf("Applied %d file change(s) to the shared implementation workspace.", len(cs.Files))
-}
-
-func applyModelReview(store *Store, j Job, rr RunnerResult) (string, error) {
-	if j.SpecID == "" {
-		return "run-review requires specId", fmt.Errorf("specId required")
-	}
-	plan, err := store.GetPlan(j.ProjectID, j.SpecID)
-	if err != nil {
-		return "Plan missing", err
-	}
-	total, done := countPlanSubtasks(plan)
-	planComplete := total > 0 && done >= total
-
-	pass := planComplete
-	if rr.ReviewPass != nil {
-		pass = *rr.ReviewPass && planComplete
-	}
-
-	review := strings.TrimSpace(rr.ReviewMarkdown)
-	if review == "" {
-		result := "FAIL"
-		if pass {
-			result = "PASS"
-		}
-		review = fmt.Sprintf("# Review result\n\n- runId: %s\n- result: %s\n- model: %s\n- subtasks: %d/%d\n\n",
-			j.RunID, result, nz(rr.Model, "unknown"), done, total)
-		if rr.RawExcerpt != "" {
-			review += "## Model excerpt\n\n" + rr.RawExcerpt + "\n"
-		}
-	}
-
-	if !pass {
-		_ = store.PutSpecFile(j.ProjectID, j.SpecID, "QA_FIX_REQUEST.md", review+"\n\nPlease address findings and re-run review.\n")
-		_, _ = store.MoveTask(j.ProjectID, j.SpecID, "in_progress")
-		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "validation",
-			fmt.Sprintf("[%s] model review FAIL (%s)\n", j.RunID, nz(rr.Model, "?")))
-		return fmt.Sprintf("Review FAIL (model/%s): wrote QA_FIX_REQUEST.md; moved to in_progress.", nz(rr.Model, "model")), nil
-	}
-
-	_ = store.PutSpecFile(j.ProjectID, j.SpecID, "REVIEW.md", review)
-	for i := range plan.Phases {
-		if plan.Phases[i].Type == "review" {
-			for k := range plan.Phases[i].Subtasks {
-				plan.Phases[i].Subtasks[k].Status = "completed"
-			}
-		}
-	}
-	plan.Status = "reviewed"
-	plan.PlanStatus = "reviewed"
-	_ = store.PutPlan(j.ProjectID, j.SpecID, plan)
-	total, done = countPlanSubtasks(plan)
-	_ = store.PutProgress(j.ProjectID, j.SpecID, TaskProgress{
-		Progress: pct(done, total), SubtaskCompleted: done, SubtaskTotal: total, RunID: j.RunID, CurrentPhaseName: "Review",
-	})
-	task, _ := store.GetTask(j.ProjectID, j.SpecID)
-	toStatus := reviewPassStatus(task)
-	_, _ = store.MoveTask(j.ProjectID, j.SpecID, toStatus)
-	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "validation",
-		fmt.Sprintf("[%s] model review PASS (%s) → %s\n", j.RunID, nz(rr.Model, "?"), toStatus))
-	return fmt.Sprintf("Review PASS (model/%s): wrote REVIEW.md; moved to %s.", nz(rr.Model, "model"), toStatus), nil
-}
-
-func applyModelQaFix(store *Store, j Job, rr RunnerResult, taskWorkDir string) (string, error) {
-	msg, err := builtinQaFix(store, j)
-	if err != nil {
-		return msg, err
-	}
-	msg = strings.Replace(msg, "(builtin)", "(model/"+nz(rr.Model, "model")+")", 1)
-	return strings.TrimSpace(msg) + " " + recordImplementationChangeSet(store, j, rr, taskWorkDir), nil
 }
 
 func applyModelIdeation(store *Store, j Job, rr RunnerResult) (string, error) {

@@ -76,29 +76,11 @@ func parseRunnerResultJSON(raw []byte) (RunnerResult, bool) {
 
 // modelAPIKeyPresent reports whether a model-backed run is possible.
 //
-// With OAM configured this is true because the key is resolved per job from the
-// acting user's org — there is no single process-wide key to inspect, and this
-// function cannot know whether a *particular* org has one without resolving. The
-// spawn probe therefore reports availability, not a guarantee; a job with no
-// credential for its org fails closed at resolve time with credential_unavailable.
-//
-// Getting this wrong is user-visible: the probe is what people read to decide
-// whether the model path is live, and before OAM it was the only signal. A bare
-// env check here would report "unset — fallback" on a correctly configured OAM
-// deployment.
+// Keys resolve per job from OAM — there is no process-wide host key. The spawn
+// probe therefore reports availability when PEER_OAM_URL is set; a job whose org
+// has no credential fails closed at resolve time with credential_unavailable.
 func modelAPIKeyPresent() bool {
-	if oamConfigured() {
-		return true
-	}
-	if authRequiredEnv() {
-		return false
-	}
-	return strings.TrimSpace(envOr("OPM_MODEL_API_KEY", "")) != "" ||
-		strings.TrimSpace(envOr("CURSOR_API_KEY", "")) != ""
-}
-
-func modelBaseURL() string {
-	return strings.TrimRight(envOr("OPM_MODEL_BASE_URL", "https://api.openai.com/v1"), "/")
+	return oamConfigured()
 }
 
 func phaseModel(phaseKey string) string {
@@ -111,8 +93,6 @@ func modelForAction(action string) string {
 		return phaseModel("OPM_MODEL_PLANNING")
 	case "run-implementation":
 		return phaseModel("OPM_MODEL_CODING")
-	case "run-review":
-		return phaseModel("OPM_MODEL_REVIEW")
 	case "run-ideation":
 		return phaseModel("OPM_MODEL_IDEATION")
 	case "run-roadmap-discovery":
@@ -128,17 +108,8 @@ func modelConfigHonesty() string {
 	if oamConfigured() {
 		return "models and API keys resolve per job from OAM (PEER_OAM_URL), scoped to the acting user's org " +
 			"and their per-agent binding; a job whose org has no credential fails closed with credential_unavailable. " +
-			"OPM_MODEL* environment variables no longer participate."
+			"Host OPM_MODEL*/CURSOR_API_KEY are not used as credentials."
 	}
-	if authRequiredEnv() {
-		return "OPA_AUTH_REQUIRED is enabled but PEER_OAM_URL is unset — model-backed jobs are refused until OAM is configured. " +
-			"Legacy OPM_MODEL* deployment-wide keys are not used in authenticated deployments."
-	}
-	if !modelAPIKeyPresent() {
-		return "OPM_MODEL_API_KEY/CURSOR_API_KEY unset — runner reports fallback; control plane uses builtin artifact helpers."
-	}
-	if strings.EqualFold(strings.TrimSpace(envOr("OPM_MODEL_PROVIDER", "")), "openai") {
-		return "model key set; runner will call " + modelBaseURL() + "/chat/completions (OpenAI-compatible). Default model is auto unless OPM_MODEL* overrides."
-	}
-	return "model key set; runner will invoke Cursor agent CLI (default --model auto). Set OPM_MODEL_PROVIDER=openai for OpenAI-compatible chat completions."
+	return "PEER_OAM_URL unset — model-backed jobs are refused until OAM is configured. " +
+		"Legacy deployment-wide OPM_MODEL*/CURSOR_API_KEY credentials have been removed."
 }

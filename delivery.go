@@ -265,7 +265,7 @@ func handleTaskDeliver(w http.ResponseWriter, r *http.Request, store *Store, pro
 		return
 	}
 
-	res, status, derr := runDelivery(r.Context(), store, p, t, cs, body.Branch, body.Base, body.Draft)
+	res, status, derr := runDelivery(r.Context(), store, p, t, cs, body.Branch, body.Base, body.Draft, actorFromRequest(r))
 	if derr != nil {
 		recordDeliveryFailure(w, store, p, specID, status, derr, map[string]interface{}{
 			"branch": res.Branch, "commitSha": res.CommitSha,
@@ -312,7 +312,7 @@ func handleTaskDeliver(w http.ResponseWriter, r *http.Request, store *Store, pro
 }
 
 // runDeliveryFromWorkspace commits paths already applied in workDir (implementation session).
-func runDeliveryFromWorkspace(ctx context.Context, p Project, t Task, workDir string, cs ChangeSet, wantBranch, wantBase string, draft bool) (deliveryResult, string, error) {
+func runDeliveryFromWorkspace(ctx context.Context, p Project, t Task, workDir string, cs ChangeSet, wantBranch, wantBase string, draft bool, userID string) (deliveryResult, string, error) {
 	res := deliveryResult{}
 	if workspaceIsStub(workDir) {
 		return res, deliveryStatusWorkspaceUnavailable,
@@ -343,7 +343,7 @@ func runDeliveryFromWorkspace(ctx context.Context, p Project, t Task, workDir st
 	res.CommitSha = commit.Sha
 	res.Files = commit.Staged
 
-	cred, err := peerPushCredentials(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo)
+	cred, err := peerPushCredentials(ctx, p.OrganizationID, userID, p.ConnectorID, p.OwnerRepo)
 	if err != nil {
 		return res, deliveryFaultStatus(err), fmt.Errorf("push credentials: %w", err)
 	}
@@ -357,7 +357,7 @@ func runDeliveryFromWorkspace(ctx context.Context, p Project, t Task, workDir st
 	if title == "" {
 		title = "Deliver " + t.SpecID
 	}
-	pr, err := peerCreatePullRequest(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo,
+	pr, err := peerCreatePullRequest(ctx, p.OrganizationID, userID, p.ConnectorID, p.OwnerRepo,
 		truncateRunes(title, 120), deliverPullRequestBody(t, cs, commit.Staged),
 		branch, base, draft)
 	if err != nil {
@@ -374,12 +374,12 @@ func runDeliveryFromWorkspace(ctx context.Context, p Project, t Task, workDir st
 // runDelivery performs workspace → apply → commit → push → pull request.
 // It returns the partial result alongside the failing status so the caller can
 // persist how far the delivery got.
-func runDelivery(ctx context.Context, store *Store, p Project, t Task, cs ChangeSet, wantBranch, wantBase string, draft bool) (deliveryResult, string, error) {
+func runDelivery(ctx context.Context, store *Store, p Project, t Task, cs ChangeSet, wantBranch, wantBase string, draft bool, userID string) (deliveryResult, string, error) {
 	res := deliveryResult{}
 
 	deliveryID := "deliver-" + uuid.NewString()
 	defer cleanupWorkspace(deliveryID)
-	workDir, err := prepareJobWorkspace(p, deliveryID)
+	workDir, err := prepareJobWorkspace(ctx, p, deliveryID, userID)
 	if err != nil {
 		return res, deliveryStatusWorkspaceUnavailable,
 			fmt.Errorf("preparing the delivery workspace: %w", err)
@@ -419,7 +419,7 @@ func runDelivery(ctx context.Context, store *Store, p Project, t Task, cs Change
 	}
 	res.CommitSha = commit.Sha
 
-	cred, err := peerPushCredentials(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo)
+	cred, err := peerPushCredentials(ctx, p.OrganizationID, userID, p.ConnectorID, p.OwnerRepo)
 	if err != nil {
 		return res, deliveryFaultStatus(err), fmt.Errorf("push credentials: %w", err)
 	}
@@ -434,7 +434,7 @@ func runDelivery(ctx context.Context, store *Store, p Project, t Task, cs Change
 	if title == "" {
 		title = "Deliver " + t.SpecID
 	}
-	pr, err := peerCreatePullRequest(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo,
+	pr, err := peerCreatePullRequest(ctx, p.OrganizationID, userID, p.ConnectorID, p.OwnerRepo,
 		truncateRunes(title, 120), deliverPullRequestBody(t, cs, applied.Applied),
 		branch, base, draft)
 	if err != nil {

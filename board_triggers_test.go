@@ -14,14 +14,13 @@ func TestColumnJobMapping(t *testing.T) {
 	starts := map[string]string{
 		"queue":       "run-planning",
 		"in_progress": "run-implementation",
-		"review":      "run-review",
 	}
 	for col, want := range starts {
 		if got := columnJobAction[col]; got != want {
 			t.Fatalf("column %q starts %q, want %q", col, got, want)
 		}
 	}
-	for _, col := range []string{"backlog", "human_review", "done"} {
+	for _, col := range []string{"backlog", "review", "human_review", "done"} {
 		if action, ok := columnJobAction[col]; ok {
 			t.Fatalf("column %q must start nothing, got %q", col, action)
 		}

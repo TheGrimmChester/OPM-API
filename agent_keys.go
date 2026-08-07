@@ -12,18 +12,14 @@ import "strings"
 // stored "coding" one, and silently fall back to a default — the wrong model
 // chosen quietly, which is exactly what per-agent configuration exists to stop.
 //
-// The keys below are the same six phases modelForAction already distinguishes
-// (via OPM_MODEL_PLANNING / _CODING / _REVIEW / _IDEATION / _ROADMAP_DISCOVERY /
-// _ROADMAP_FEATURES), plus qa_fix. Keep the two in step: this function and
-// modelForAction are the same taxonomy seen from two sides.
+// The keys below match the AI phases OPM still owns (planning, coding, ideation,
+// roadmap). Deep review / QA-fix live in ORA — they are not OPM agent keys.
 const (
-	agentKeyPlanning         = "planning"
-	agentKeyCoding           = "coding"
-	agentKeyReview           = "review"
-	agentKeyQAFix            = "qa_fix"
-	agentKeyIdeation         = "ideation"
+	agentKeyPlanning          = "planning"
+	agentKeyCoding            = "coding"
+	agentKeyIdeation          = "ideation"
 	agentKeyRoadmapDiscovery  = "roadmap_discovery"
-	agentKeyRoadmapFeatures   = "roadmap_features"
+	agentKeyRoadmapFeatures  = "roadmap_features"
 	agentKeyRoadmapCompetitor = "roadmap_competitor"
 )
 
@@ -39,10 +35,6 @@ func agentKeyForAction(action string) string {
 		return agentKeyPlanning
 	case "run-implementation":
 		return agentKeyCoding
-	case "run-review":
-		return agentKeyReview
-	case "run-qa-fix":
-		return agentKeyQAFix
 	case "run-ideation":
 		return agentKeyIdeation
 	case "run-roadmap-discovery":
@@ -78,8 +70,6 @@ func agentCatalog() []agentCatalogEntry {
 	return []agentCatalogEntry{
 		{AgentKey: agentKeyPlanning, Label: "Planning", TierHint: "light"},
 		{AgentKey: agentKeyCoding, Label: "Implementation", TierHint: "strong"},
-		{AgentKey: agentKeyReview, Label: "Review", TierHint: "strong"},
-		{AgentKey: agentKeyQAFix, Label: "QA fix", TierHint: "strong"},
 		{AgentKey: agentKeyIdeation, Label: "Ideation", TierHint: "light"},
 		{AgentKey: agentKeyRoadmapDiscovery, Label: "Roadmap discovery", TierHint: "light"},
 		{AgentKey: agentKeyRoadmapFeatures, Label: "Roadmap features", TierHint: "strong"},

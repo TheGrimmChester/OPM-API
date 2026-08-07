@@ -29,12 +29,12 @@ import (
 // this map deliberately start nothing:
 //
 //   - backlog       parking, not work
+//   - review        human parking after coding — deep review is ORA's domain
 //   - human_review  this IS the human gate — where autopilot parks to wait
 //   - done          autopilot already merges and moves here itself
 var columnJobAction = map[string]string{
 	"queue":       "run-planning",
 	"in_progress": "run-implementation",
-	"review":      "run-review",
 }
 
 // boardTriggerOutcome describes what a drag did, for the API response and the log.

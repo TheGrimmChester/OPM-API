@@ -141,7 +141,12 @@ func resolveAgentFromOAM(ctx context.Context, org, proj, actor, agentKey string,
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	if err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/agents/resolve", req, &out); err != nil {
+	// Prefer lease → one-shot redeem so the plaintext key is not held in OAM's
+	// HTTP response cache path longer than necessary. Fall back to direct resolve
+	// when the lease endpoints are unavailable (older OAM).
+	if leased, err := leaseAndRedeemAgentFromOAM(ctx, cfg, req); err == nil {
+		out = leased
+	} else if err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/agents/resolve", req, &out); err != nil {
 		return resolvedAgentBinding{}, err
 	}
 	if strings.TrimSpace(out.APIKey) == "" {
@@ -160,6 +165,25 @@ func resolveAgentFromOAM(ctx context.Context, org, proj, actor, agentKey string,
 	if out.SkippedNoCredential > 0 {
 		log.Printf("oam: agent %q resolved %d of %d endpoints; %d were skipped for want of a credential",
 			agentKey, len(out.Candidates), out.Considered, out.SkippedNoCredential)
+	}
+	return out, nil
+}
+
+func leaseAndRedeemAgentFromOAM(ctx context.Context, cfg openclient.PeerConfig, req oamResolveRequest) (resolvedAgentBinding, error) {
+	var lease struct {
+		LeaseID string `json:"lease_id"`
+	}
+	if err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/internal/job-credentials/lease", req, &lease); err != nil {
+		return resolvedAgentBinding{}, err
+	}
+	if strings.TrimSpace(lease.LeaseID) == "" {
+		return resolvedAgentBinding{}, fmt.Errorf("oam lease returned empty lease_id")
+	}
+	var out resolvedAgentBinding
+	if err := openclient.PeerJSON(ctx, cfg, http.MethodPost, "/api/internal/job-credentials/redeem", map[string]string{
+		"lease_id": lease.LeaseID,
+	}, &out); err != nil {
+		return resolvedAgentBinding{}, err
 	}
 	return out, nil
 }

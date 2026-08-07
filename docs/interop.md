@@ -22,20 +22,19 @@ AUTH_MODE=codeployed
 | Concern | Product |
 |---------|---------|
 | User login / JWT issuer | **OPA-Hub** |
-| Organization directory | **OPA-Hub** (`GET /api/tenancy/organizations`; reads OAM when `PEER_OAM_URL` is set on hub) |
+| Organization directory | **OAM** (`GET /api/organizations`; OPM proxies at `/api/oam/organizations`) |
 | Connector / AI credential **storage** + model bindings | **OAM** |
 | GitHub App / PAT **protocol** (install, callback, clone/push/PR, issues) | **ORA** (uses OAM-stored credentials) |
 | Kanban / roadmap / task jobs / delivery apply | **OPM** |
 | Code review / Repo Watch | **ORA** (deep-link; do not duplicate) |
 
-With `PEER_OAM_URL` set, each job resolves its model **and** API key from OAM (`creds:resolve`) and fails closed when the org has no credential. `OPM_MODEL*` / `CURSOR_API_KEY` are the legacy path used only when OAM is unset.
+With `PEER_OAM_URL` set, each job resolves its model **and** API key from OAM (`creds:resolve`) and fails closed when the org has no credential. Host `OPM_MODEL*` / `CURSOR_API_KEY` are not credentials.
 
 ## Allowed peer calls
 
 | Caller → Callee | Purpose | Scopes |
 |-----------------|---------|--------|
-| OPM → Hub | Org list, GitHub status advertisement | `health:read` (peer probe) |
-| OPM → OAM | Per-job model + API key | `creds:resolve` |
+| OPM → OAM | Org list, project directory, per-job model + API key | `creds:resolve` (and user JWT for directory proxies) |
 | OPM → OAM | Publish agent catalog on boot | `catalog:write` |
 | OPM → ORA | List connectors / repos | `connectors:read` |
 | OPM → ORA | Short-lived clone credentials for job tmp workspaces | `scm:clone` |

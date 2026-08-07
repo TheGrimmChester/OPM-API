@@ -32,11 +32,25 @@ func registerOPMMux(mux *http.ServeMux, store *Store, authView, authAdmin func(s
 				writeError(w, 400, "invalid json")
 				return
 			}
+			id := strings.TrimSpace(in.ID)
+			if id == "" {
+				id = strings.TrimSpace(r.Header.Get("X-Project-ID"))
+			}
+			if id == "" || strings.EqualFold(id, "all") {
+				writeError(w, 400, "oam project id required")
+				return
+			}
+			in.ID = id
+			r.Header.Set("X-Project-ID", id)
+			if st, msg := requireEnabledOAMProject(r, "opm"); st != 0 {
+				writeError(w, st, msg)
+				return
+			}
 			if in.OrganizationID == "" {
 				in.OrganizationID = resolveRequestOrg(r)
 			}
 			in.OrganizationID = normalizeWriteOrg(in.OrganizationID)
-			p, err := store.CreateProject(in)
+			p, err := store.EnsureProject(in)
 			if err != nil {
 				writeError(w, 400, err.Error())
 				return
@@ -57,6 +71,60 @@ func registerOPMMux(mux *http.ServeMux, store *Store, authView, authAdmin func(s
 	})
 }
 
+// handleEnsureProject provisions (or returns) the board-registry row for a
+// concrete OAM directory project. Body: `{ "id": "<oam-project-id>" }` — when
+// omitted, X-Project-ID is used. The registry id equals the directory id so
+// selecting a family project opens its board without a second link step.
+func handleEnsureProject(w http.ResponseWriter, r *http.Request, store *Store) {
+	if r.Method != http.MethodPost {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if r.Body != nil {
+		defer r.Body.Close()
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	id := strings.TrimSpace(body.ID)
+	if id == "" {
+		id = strings.TrimSpace(r.Header.Get("X-Project-ID"))
+	}
+	if id == "" || strings.EqualFold(id, "all") {
+		writeError(w, 400, "concrete project id required")
+		return
+	}
+	r.Header.Set("X-Project-ID", id)
+	if st, msg := requireEnabledOAMProject(r, "opm"); st != 0 {
+		writeError(w, st, msg)
+		return
+	}
+
+	org := resolveRequestOrg(r)
+	in := Project{ID: id, Name: id, OrganizationID: org}
+
+	if oamPeerURL() != "" {
+		dir, err := lookupOAMDirectoryProject(r.Context(), r, "opm", id)
+		if err != nil {
+			writeError(w, 503, "could not load OAM directory project: "+err.Error())
+			return
+		}
+		if dir == nil {
+			writeError(w, 404, "project not found in OAM directory")
+			return
+		}
+		in = boardProjectFromOAM(dir, org)
+	}
+
+	p, err := store.EnsureProject(in)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, p)
+}
+
 func handleProjectRoute(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/projects/")
@@ -68,6 +136,12 @@ func handleProjectRoute(store *Store) http.HandlerFunc {
 		parts := strings.Split(path, "/")
 		projectID := parts[0]
 		org := resolveRequestOrg(r)
+
+		// Family project → board: provision/link registry row keyed by OAM id.
+		if projectID == "ensure" && len(parts) == 1 {
+			handleEnsureProject(w, r, store)
+			return
+		}
 
 		// Org gate first — blocks IDOR on GET/DELETE and all nested board/jobs/GitHub ops.
 		if _, err := store.GetProjectForOrg(projectID, org); err != nil {
@@ -249,7 +323,7 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 			// returned below carries it. The response shape is unchanged.
 			if prevErr == nil && taskTextChanged(prev, t) {
 				if p, perr := store.GetProjectForOrg(projectID, resolveRequestOrg(r)); perr == nil {
-					if outcome := syncTaskProjectAfterEdit(store, p, t); outcome.Task.SpecID != "" {
+					if outcome := syncTaskProjectAfterEdit(store, p, t, actorFromRequest(r)); outcome.Task.SpecID != "" {
 						t = outcome.Task
 					}
 				}
@@ -291,7 +365,7 @@ func handleTasks(w http.ResponseWriter, r *http.Request, store *Store, projectID
 		// board drag reaches this handler.
 		trigger := boardTriggerOutcome{Reason: "project not resolved"}
 		if p, perr := store.GetProjectForOrg(projectID, resolveRequestOrg(r)); perr == nil {
-			syncTaskGitHubAfterMove(store, p, t)
+			syncTaskGitHubAfterMove(store, p, t, actorFromRequest(r))
 			// The drag carries an authenticated user, so the job it starts runs as
 			// that person — which is what makes the run attributable.
 			trigger = maybeStartJobForColumn(store, p, t, jobOriginFromRequest(r, nil))
@@ -490,6 +564,10 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 				writeError(w, 400, "action required")
 				return
 			}
+			if err := unsupportedReviewAction(body.Action); err != nil {
+				writeError(w, 400, err.Error())
+				return
+			}
 			if body.Action == "skip-to-phase" && body.TargetPhase < 1 {
 				writeError(w, 400, "targetPhase required for skip-to-phase (1-based)")
 				return
@@ -513,7 +591,7 @@ func handleJobs(w http.ResponseWriter, r *http.Request, store *Store, projectID 
 			j.AudienceNotes = strings.TrimSpace(body.AudienceNotes)
 			if preferContainerSpawn() {
 				j.Execution = "container"
-				j.Message = "Queued: will docker-run " + runner + " (model when OPM_MODEL_API_KEY set; else fallback + builtin artifacts)."
+				j.Message = "Queued: will docker-run " + runner + " (model from OAM when PEER_OAM_URL set)."
 			} else {
 				j.Execution = "builtin"
 				j.Message = "Queued (builtin): will write plan/spec/progress artifacts in-process (container spawn not ready; set docker CLI + sock + runner image, or OPM_FORCE_BUILTIN=1)."

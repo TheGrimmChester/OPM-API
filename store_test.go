@@ -108,6 +108,103 @@ func TestCreateProjectRejectsBadRepo(t *testing.T) {
 	}
 }
 
+func TestEnsureProjectUsesDirectoryID(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.EnsureProject(Project{
+		ID:             "balansun-website",
+		Name:           "balansun-website",
+		OwnerRepo:      "balansun/balansun-website",
+		ConnectorID:    "conn-1",
+		OrganizationID: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ID != "balansun-website" {
+		t.Fatalf("id=%s want balansun-website", p.ID)
+	}
+	if p.OwnerRepo != "balansun/balansun-website" {
+		t.Fatalf("ownerRepo=%s", p.OwnerRepo)
+	}
+	board, err := store.GetBoard(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if board["backlog"] == nil {
+		t.Fatalf("expected empty board layout, got %#v", board)
+	}
+	again, err := store.EnsureProject(Project{ID: "balansun-website", Name: "ignored"})
+	if err != nil {
+		t.Fatal(err)
+	}
+		if again.ID != p.ID || again.OwnerRepo != p.OwnerRepo {
+		t.Fatalf("ensure should be idempotent: %#v vs %#v", again, p)
+	}
+}
+
+func TestEnsureProjectRefreshesOrgID(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.EnsureProject(Project{
+		ID: "proj-1", Name: "proj-1", OrganizationID: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.EnsureProject(Project{
+		ID: "proj-1", Name: "proj-1", OrganizationID: "org-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OrganizationID != "org-a" {
+		t.Fatalf("OrganizationID=%q want org-a", got.OrganizationID)
+	}
+	// Personal stays empty when caller org is empty.
+	personal, err := store.EnsureProject(Project{
+		ID: "personal-1", Name: "personal-1", OrganizationID: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := store.EnsureProject(Project{
+		ID: "personal-1", Name: "personal-1", OrganizationID: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.OrganizationID != "" || personal.OrganizationID != "" {
+		t.Fatalf("personal org must stay empty: %#v", again)
+	}
+}
+
+func TestEnsureProjectReusesOwnerRepo(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := store.CreateProject(Project{
+		OwnerRepo: "acme/site", ConnectorID: "c1", OrganizationID: "default-org",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.EnsureProject(Project{
+		ID: "site", Name: "site", OwnerRepo: "acme/site", ConnectorID: "c1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != linked.ID {
+		t.Fatalf("expected reuse of linked id %s, got %s", linked.ID, got.ID)
+	}
+}
+
 func TestOrgScopedProjectAccess(t *testing.T) {
 	opentenant.SetAuthEnforced(true)
 	t.Cleanup(func() { opentenant.SetAuthEnforced(false) })
@@ -149,13 +246,47 @@ func TestOrgScopedProjectAccess(t *testing.T) {
 }
 
 func TestNormalizeWriteOrg(t *testing.T) {
-	if got := normalizeWriteOrg(""); got != "default-org" {
-		t.Fatalf("got %s", got)
+	if got := normalizeWriteOrg(""); got != "" {
+		t.Fatalf("empty got %q want empty", got)
 	}
-	if got := normalizeWriteOrg("all"); got != "default-org" {
-		t.Fatalf("got %s", got)
+	if got := normalizeWriteOrg("all"); got != "" {
+		t.Fatalf("all got %q want empty", got)
 	}
 	if got := normalizeWriteOrg("nas"); got != "nas" {
 		t.Fatalf("got %s", got)
+	}
+	if got := normalizeWriteOrg("default-org"); got != "default-org" {
+		t.Fatalf("explicit default-org got %q", got)
+	}
+}
+
+func TestEmptyOrgListExcludesDefaultOrg(t *testing.T) {
+	opentenant.SetAuthEnforced(true)
+	t.Cleanup(func() { opentenant.SetAuthEnforced(false) })
+
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(Project{
+		OwnerRepo: "acme/shared", ConnectorID: "c1", OrganizationID: "default-org",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	personal, err := store.CreateProject(Project{
+		OwnerRepo: "acme/mine", ConnectorID: "c1", OrganizationID: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if personal.OrganizationID != "" {
+		t.Fatalf("personal project org=%q want empty", personal.OrganizationID)
+	}
+	list, err := store.ListProjectsForOrg("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != personal.ID {
+		t.Fatalf("empty-org list under auth should be personal only: %v", list)
 	}
 }

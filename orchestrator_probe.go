@@ -61,6 +61,6 @@ func probeRunnerSpawn() runnerSpawnProbe {
 	out.SpawnReady = true
 	out.ModelConfigured = modelAPIKeyPresent()
 	out.ModelHonesty = modelConfigHonesty()
-	out.Honesty = "docker + " + img + " ready. Jobs docker-run the runner when spawnReady; model path uses OPM_MODEL_* when configured, else honest fallback + builtin artifacts. Set OPM_FORCE_BUILTIN=1 to skip containers."
+	out.Honesty = "docker + " + img + " ready. Jobs docker-run the runner when spawnReady; model path resolves from OAM (PEER_OAM_URL) per job, else jobs fail closed / use builtin artifacts. Set OPM_FORCE_BUILTIN=1 to skip containers."
 	return out
 }

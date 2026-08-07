@@ -317,7 +317,7 @@ func handleIssueLink(w http.ResponseWriter, r *http.Request, store *Store, p Pro
 	var out map[string]interface{}
 	var err error
 	if body.IssueNumber > 0 {
-		out, err = peerGetIssue(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo, body.IssueNumber)
+		out, err = peerGetIssue(ctx, p.OrganizationID, actorFromRequest(r), p.ConnectorID, p.OwnerRepo, body.IssueNumber)
 	} else {
 		mode = "created"
 		title := strings.TrimSpace(body.Title)
@@ -334,7 +334,7 @@ func handleIssueLink(w http.ResponseWriter, r *http.Request, store *Store, p Pro
 			})
 			return
 		}
-		out, err = peerCreateIssue(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo,
+		out, err = peerCreateIssue(ctx, p.OrganizationID, actorFromRequest(r), p.ConnectorID, p.OwnerRepo,
 			title, issueBody, body.Labels, t.GithubMilestoneNumber)
 	}
 	if err != nil {
@@ -428,7 +428,7 @@ func handleIssuePush(w http.ResponseWriter, r *http.Request, store *Store, p Pro
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	out, err := peerUpdateIssue(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo,
+	out, err := peerUpdateIssue(ctx, p.OrganizationID, actorFromRequest(r), p.ConnectorID, p.OwnerRepo,
 		t.GithubIssueNumber, t.Title, t.Description, state, t.GithubMilestoneNumber, nil)
 	if err != nil {
 		recordIssueFailure(w, store, p, body.SpecID, "push", err)
@@ -488,7 +488,7 @@ func handleIssuePull(w http.ResponseWriter, r *http.Request, store *Store, p Pro
 
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	out, err := peerGetIssue(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo, t.GithubIssueNumber)
+	out, err := peerGetIssue(ctx, p.OrganizationID, actorFromRequest(r), p.ConnectorID, p.OwnerRepo, t.GithubIssueNumber)
 	if err != nil {
 		recordIssueFailure(w, store, p, body.SpecID, "pull", err)
 		return

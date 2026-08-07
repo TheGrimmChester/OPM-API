@@ -59,10 +59,10 @@ func executeJob(store *Store, j Job) {
 			fail(fmt.Sprintf("%s requires specId", j.Action), fmt.Errorf("specId required"))
 			return
 		}
-		workDir, werr = ensureTaskWorkspace(p, j.SpecID)
+		workDir, werr = ensureTaskWorkspace(context.Background(), p, j.SpecID, j.ActorUsername)
 		taskSessionDir = workDir
 	default:
-		workDir, werr = prepareJobWorkspace(p, j.RunID)
+		workDir, werr = prepareJobWorkspace(context.Background(), p, j.RunID, j.ActorUsername)
 	}
 	if werr != nil {
 		fail("Job failed while preparing workspace.", werr)
@@ -96,7 +96,7 @@ func executeJob(store *Store, j Job) {
 	if j.Action == "run-pipeline" {
 		j.State = "running"
 		j.Execution = "builtin"
-		j.Message = "Running task pipeline: plan → implement all subtasks → review → deliver…"
+		j.Message = "Running task pipeline: plan → implement all subtasks → park in review…"
 	} else if preferContainerSpawn() {
 		j.State = "running"
 		j.Execution = "container"
@@ -153,11 +153,8 @@ func executeJob(store *Store, j Job) {
 			spawnNote += "Model fallback: " + truncateRunes(runnerRR.Reason, 160) + ". "
 			if j.SpecID != "" {
 				phase := "planning"
-				switch j.Action {
-				case "run-implementation":
+				if j.Action == "run-implementation" {
 					phase = "implementation"
-				case "run-review", "run-qa-fix":
-					phase = "validation"
 				}
 				_ = store.AppendSpecLog(j.ProjectID, j.SpecID, phase,
 					fmt.Sprintf("[%s] runner fallback: %s\n", j.RunID, runnerRR.Reason))
@@ -170,10 +167,9 @@ func executeJob(store *Store, j Job) {
 			resultMsg, err = builtinPlanning(store, j)
 		case "run-implementation":
 			resultMsg, err = builtinImplementation(store, j)
-		case "run-review":
-			resultMsg, err = builtinReview(store, j)
-		case "run-qa-fix":
-			resultMsg, err = builtinQaFix(store, j)
+		case "run-review", "run-qa-fix":
+			resultMsg = "Deep review is owned by ORA; local run-review/run-qa-fix are gone."
+			err = unsupportedReviewAction(j.Action)
 		case "run-pipeline":
 			var usedContainer bool
 			resultMsg, usedContainer, err = runPipeline(store, j, workDir, taskSessionDir)
@@ -237,21 +233,6 @@ func executeJob(store *Store, j Job) {
 	if (origAction == "run-planning" || origAction == "run-followup-planning") && j.SpecID != "" {
 		if extra, perr := postPlanningJob(store, j); perr != nil {
 			resultMsg += fmt.Sprintf(" Post-planning: %v.", perr)
-		} else if extra != "" {
-			resultMsg += " " + extra
-		}
-	}
-	if origAction == "run-review" && j.SpecID != "" {
-		passed := lastReviewPassed(store, j)
-		if extra, perr := postReviewJob(store, j, p, taskSessionDir, passed); perr != nil {
-			resultMsg += fmt.Sprintf(" Post-review: %v.", perr)
-		} else if extra != "" {
-			resultMsg += " " + extra
-		}
-	}
-	if origAction == "run-qa-fix" && j.SpecID != "" {
-		if extra, perr := postQaFixJob(store, j); perr != nil {
-			resultMsg += fmt.Sprintf(" Post-qa-fix: %v.", perr)
 		} else if extra != "" {
 			resultMsg += " " + extra
 		}
@@ -551,7 +532,7 @@ func runPipeline(store *Store, j Job, workDir, taskSessionDir string) (msg strin
 		}
 		// Planning may have created the task session; refresh for coding drain.
 		if p, perr := store.GetProject(j.ProjectID); perr == nil {
-			if wd, werr := ensureTaskWorkspace(p, j.SpecID); werr == nil {
+			if wd, werr := ensureTaskWorkspace(context.Background(), p, j.SpecID, j.ActorUsername); werr == nil {
 				sessionDir = wd
 				workDir = wd
 			}
@@ -613,61 +594,28 @@ func runPipeline(store *Store, j Job, workDir, taskSessionDir string) (msg strin
 		return "Pipeline stopped: " + bmsg + " Steps: " + strings.Join(steps, " | "), usedContainer, fmt.Errorf("%s", bmsg)
 	}
 
-	setPipelineProgress("run-review", "Review", true)
-	rj := pipelineStepJob(j, "run-review")
-	reviewMsg, spawned, rerr := pipelineReviewStep(store, rj, sessionDir)
-	if spawned {
-		usedContainer = true
-	}
-	steps = append(steps, reviewMsg)
-	if rerr != nil {
-		return "Pipeline failed during review: " + reviewMsg, usedContainer, rerr
-	}
-	cur, _ := store.GetTask(j.ProjectID, j.SpecID)
-	if strings.Contains(reviewMsg, "Review FAIL") || cur.Status == "in_progress" {
-		setPipelineProgress("run-pipeline", "Review failed", false)
-		summary := "Pipeline finished with review FAIL: " + strings.Join(steps, " → ")
-		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "validation",
-			fmt.Sprintf("[%s] run-pipeline ended with review FAIL\n", j.RunID))
-		return summary, usedContainer, fmt.Errorf("review failed")
-	}
-
 	plan, _ = store.GetPlan(j.ProjectID, j.SpecID)
 	total, done := countPlanSubtasks(plan)
 	if total == 0 || done < total {
-		msg := fmt.Sprintf("refusing deliver: subtasks incomplete (%d/%d)", done, total)
+		msg := fmt.Sprintf("coding incomplete (%d/%d)", done, total)
 		steps = append(steps, msg)
 		setPipelineProgress("run-pipeline", "Incomplete", false)
 		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
-			fmt.Sprintf("[%s] run-pipeline refused deliver: %s\n", j.RunID, msg))
+			fmt.Sprintf("[%s] run-pipeline incomplete: %s\n", j.RunID, msg))
 		return "Pipeline stopped: " + strings.Join(steps, " → "), usedContainer, fmt.Errorf("%s", msg)
 	}
 
-	setPipelineProgress("run-pipeline", "Deliver", true)
-	p, perr := store.GetProject(j.ProjectID)
-	if perr != nil {
-		return "Pipeline failed loading project for deliver: " + perr.Error(), usedContainer, perr
+	// Park for human approve/deliver — do not run local review or auto-deliver.
+	setPipelineProgress("run-pipeline", "Review (human)", false)
+	if _, merr := store.MoveTask(j.ProjectID, j.SpecID, "review"); merr != nil {
+		return "Pipeline coding done but move to review failed: " + merr.Error(), usedContainer, merr
 	}
-	dmsg, dstatus, derr := pipelineDeliver(store, j, p, sessionDir)
-	if derr != nil {
-		steps = append(steps, fmt.Sprintf("deliver failed (%s): %s", dstatus, derr.Error()))
-		setPipelineProgress("run-pipeline", "Delivery failed", false)
-		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
-			fmt.Sprintf("[%s] run-pipeline stopped: delivery hard failure status=%s\n", j.RunID, dstatus))
-		return "Pipeline stopped after delivery failure (left in human_review): " + strings.Join(steps, " → "), usedContainer, derr
-	}
-	steps = append(steps, dmsg)
-
-	if _, merr := store.MoveTask(j.ProjectID, j.SpecID, "done"); merr != nil {
-		return "Pipeline delivered but move to done failed: " + merr.Error(), usedContainer, merr
-	}
-	steps = append(steps, "moved to done")
-	releaseTaskWorkspace(j.ProjectID, j.SpecID)
+	steps = append(steps, "parked in review for human approve/deliver")
+	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
+		fmt.Sprintf("[%s] run-pipeline finished → review (human gate)\n", j.RunID))
 
 	setPipelineProgress("run-pipeline", "Complete", false)
 	summary := "Pipeline complete: " + strings.Join(steps, " → ")
-	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation",
-		fmt.Sprintf("[%s] run-pipeline finished → done\n", j.RunID))
 	return summary, usedContainer, nil
 }
 
@@ -765,164 +713,6 @@ func pipelineImplementationStep(store *Store, j Job, workDir string) (string, bo
 	}
 	msg, err := builtinImplementationOpts(store, j, true)
 	return msg, false, err
-}
-
-func pipelineReviewStep(store *Store, j Job, workDir string) (string, bool, error) {
-	if preferContainerSpawn() && workDir != "" {
-		cout, serr := runTaskContainer(store, j, workDir)
-		if serr == nil && cout.HasResult && cout.Result.Mode == "model" {
-			if handled, msg, aerr := applyRunnerResult(store, j, cout.Result, workDir); handled {
-				return msg, true, aerr
-			}
-		}
-		if serr == nil {
-			msg, err := builtinReview(store, j)
-			return msg, true, err
-		}
-	}
-	msg, err := builtinReview(store, j)
-	return msg, false, err
-}
-
-// deliverTaskPR commits/pushes/opens a PR from the task session when possible,
-// otherwise from the change set. Soft-skips (nil err) when unconfigured or the
-// change set is empty. Hard failures persist deliveryStatus/Error and return
-// err; they do not move board columns (callers decide).
-func deliverTaskPR(store *Store, j Job, p Project, taskSessionDir string) (msg, status string, err error) {
-	ctx := context.Background()
-	if strings.TrimSpace(p.OwnerRepo) == "" || strings.TrimSpace(p.ConnectorID) == "" || !peerORAConfigured() {
-		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
-			fmt.Sprintf("[%s] deliver skipped: unconfigured\n", j.RunID))
-		return "deliver skipped: unconfigured", "skipped_unconfigured", nil
-	}
-	t, terr := store.GetTask(j.ProjectID, j.SpecID)
-	if terr != nil {
-		return "", deliveryStatusTaskNotFound, terr
-	}
-	cs, cerr := store.GetChangeSet(j.ProjectID, j.SpecID)
-	if cerr != nil {
-		return "", deliveryStatusUpstreamError, cerr
-	}
-	if len(cs.Files) == 0 {
-		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
-			fmt.Sprintf("[%s] deliver skipped: no_changes_produced\n", j.RunID))
-		_, _ = store.MutateTask(j.ProjectID, j.SpecID, func(task *Task) {
-			task.DeliveryStatus = deliveryStatusNoChanges
-			task.DeliveryError = "nothing to deliver"
-		})
-		return "deliver skipped: no_changes_produced", deliveryStatusNoChanges, nil
-	}
-
-	var res deliveryResult
-	var dstatus string
-	var derr error
-	if taskSessionDir != "" && !workspaceIsStub(taskSessionDir) {
-		res, dstatus, derr = runDeliveryFromWorkspace(ctx, p, t, taskSessionDir, cs, "", "", false)
-	} else {
-		res, dstatus, derr = runDelivery(ctx, store, p, t, cs, "", "", false)
-	}
-	if derr != nil {
-		_, _ = store.MutateTask(j.ProjectID, j.SpecID, func(task *Task) {
-			task.DeliveryStatus = dstatus
-			task.DeliveryError = derr.Error()
-		})
-		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
-			fmt.Sprintf("[%s] deliver FAILED status=%s: %v\n", j.RunID, dstatus, derr))
-		return "", dstatus, derr
-	}
-
-	now := nowUTC()
-	_, _ = store.MutateTask(j.ProjectID, j.SpecID, func(task *Task) {
-		task.DeliveryBranch = res.Branch
-		task.DeliveryCommitSha = res.CommitSha
-		task.DeliveryFiles = res.Files
-		task.DeliveredAt = &now
-		task.PRNumber = res.PRNumber
-		task.PRURL = res.PRURL
-		task.PRState = res.PRState
-		task.DeliveryStatus = deliveryStatusDelivered
-		task.DeliveryError = ""
-	})
-	_ = store.ClearChangeSet(j.ProjectID, j.SpecID)
-	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, deliveryLogPhase,
-		fmt.Sprintf("[%s] deliver OK branch=%s commit=%s pr=#%d\n",
-			j.RunID, res.Branch, shortSha(res.CommitSha), res.PRNumber))
-	return fmt.Sprintf("delivered PR #%d", res.PRNumber), deliveryStatusDelivered, nil
-}
-
-// pipelineDeliver wraps deliverTaskPR; on hard failure moves the task to
-// human_review so the pipeline does not proceed to done.
-func pipelineDeliver(store *Store, j Job, p Project, taskSessionDir string) (msg, status string, err error) {
-	msg, status, err = deliverTaskPR(store, j, p, taskSessionDir)
-	if err != nil {
-		_, _ = store.MoveTask(j.ProjectID, j.SpecID, "human_review")
-		return "", status, err
-	}
-	return msg, status, nil
-}
-
-func builtinReview(store *Store, j Job) (string, error) {
-	if j.SpecID == "" {
-		return "run-review requires specId", fmt.Errorf("specId required")
-	}
-	plan, err := store.GetPlan(j.ProjectID, j.SpecID)
-	if err != nil {
-		return "Plan missing", err
-	}
-	total, done := countPlanSubtasks(plan)
-	pass := total > 0 && done >= total
-	result := "FAIL"
-	if pass {
-		result = "PASS"
-	}
-	review := fmt.Sprintf("# Review result\n\n- runId: %s\n- result: %s\n- subtasks: %d/%d completed\n\n", j.RunID, result, done, total)
-	if !pass {
-		review += "## Findings\n\n- Incomplete subtasks remain — run implementation until plan is complete, then re-review.\n"
-		_ = store.PutSpecFile(j.ProjectID, j.SpecID, "QA_FIX_REQUEST.md", review+"\nPlease complete remaining pending subtasks.\n")
-		_, _ = store.MoveTask(j.ProjectID, j.SpecID, "in_progress")
-		_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "validation", fmt.Sprintf("[%s] review FAIL\n", j.RunID))
-		return "Review FAIL (builtin): incomplete plan; wrote QA_FIX_REQUEST.md; moved back to in_progress.", nil
-	}
-	_ = store.PutSpecFile(j.ProjectID, j.SpecID, "REVIEW.md", review)
-	// Mark review-phase subtasks complete
-	for i := range plan.Phases {
-		if plan.Phases[i].Type == "review" {
-			for k := range plan.Phases[i].Subtasks {
-				plan.Phases[i].Subtasks[k].Status = "completed"
-			}
-		}
-	}
-	plan.Status = "reviewed"
-	plan.PlanStatus = "reviewed"
-	_ = store.PutPlan(j.ProjectID, j.SpecID, plan)
-	total, done = countPlanSubtasks(plan)
-	_ = store.PutProgress(j.ProjectID, j.SpecID, TaskProgress{
-		Progress: pct(done, total), SubtaskCompleted: done, SubtaskTotal: total, RunID: j.RunID, CurrentPhaseName: "Review",
-	})
-	task, _ := store.GetTask(j.ProjectID, j.SpecID)
-	toStatus := reviewPassStatus(task)
-	_, _ = store.MoveTask(j.ProjectID, j.SpecID, toStatus)
-	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "validation", fmt.Sprintf("[%s] review PASS → %s\n", j.RunID, toStatus))
-	return fmt.Sprintf("Review PASS (builtin): wrote REVIEW.md; moved to %s.", toStatus), nil
-}
-
-func builtinQaFix(store *Store, j Job) (string, error) {
-	if j.SpecID == "" {
-		return "run-qa-fix requires specId", fmt.Errorf("specId required")
-	}
-	_ = store.PutSpecFile(j.ProjectID, j.SpecID, "QA_FIX_REQUEST.md", "# QA fix applied\n\nBuiltin runner cleared pending QA findings. Re-run review.\n")
-	plan, _ := store.GetPlan(j.ProjectID, j.SpecID)
-	for i := range plan.Phases {
-		for k := range plan.Phases[i].Subtasks {
-			if plan.Phases[i].Subtasks[k].Status == "failed" || plan.Phases[i].Subtasks[k].Status == "stuck" {
-				plan.Phases[i].Subtasks[k].Status = "pending"
-			}
-		}
-	}
-	_ = store.PutPlan(j.ProjectID, j.SpecID, plan)
-	_, _ = store.MoveTask(j.ProjectID, j.SpecID, "in_progress")
-	_ = store.AppendSpecLog(j.ProjectID, j.SpecID, "implementation", fmt.Sprintf("[%s] qa-fix applied\n", j.RunID))
-	return "QA fix (builtin): reset failed subtasks; moved to in_progress. Re-run implementation/review.", nil
 }
 
 func taskPausedBlock(store *Store, j Job) (bool, string) {
@@ -1103,7 +893,7 @@ func markJobCancelledStuck(store *Store, j Job) {
 		return
 	}
 	switch j.Action {
-	case "run-implementation", "run-planning", "run-followup-planning", "run-review", "run-qa-fix", "run-pipeline":
+	case "run-implementation", "run-planning", "run-followup-planning", "run-pipeline":
 	default:
 		return
 	}

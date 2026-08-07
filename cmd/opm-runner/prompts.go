@@ -29,7 +29,6 @@ func defaultTaskPrompts(in runnerInput) (system, user string) {
 Keys by action:
 - run-planning / run-followup-planning: specMarkdown (string), plan (object: feature, workflow_type, phases[{phase,name,type,subtasks[{id,description,status,verification,files_to_modify}]}])
 - run-implementation: files (array), commitMessage (string), implementationNotes (string), completedSubtaskId (string, optional)
-- run-review: reviewMarkdown (string), reviewPass (boolean)
 
 For run-implementation, "files" is the actual source change and the only thing that becomes a commit:
   [{"path":"relative/path.go","contents":"<complete new file body>"}]

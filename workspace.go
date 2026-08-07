@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	openjobenv "github.com/TheGrimmChester/open-job-env-go"
 )
 
 func jobTmpRoot() string {
@@ -15,16 +17,17 @@ func jobTmpRoot() string {
 
 // prepareJobWorkspace creates an ephemeral clone under OPM_JOB_TMP/{runId}.
 // Credentials come from ORA (never stored in OPM). Caller must cleanupWorkspace.
-func prepareJobWorkspace(p Project, runID string) (string, error) {
+// userID is stamped on the peer service JWT for personal (empty-org) connectors.
+func prepareJobWorkspace(ctx context.Context, p Project, runID, userID string) (string, error) {
 	root := filepath.Join(jobTmpRoot(), runID)
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
 	}
-	return cloneRepoInto(p, root, "repo")
+	return cloneRepoInto(ctx, p, root, "repo", userID)
 }
 
 // cloneRepoInto shallow-clones ownerRepo into root/subdir when credentials exist.
-func cloneRepoInto(p Project, root, subdir string) (string, error) {
+func cloneRepoInto(ctx context.Context, p Project, root, subdir, userID string) (string, error) {
 	work := filepath.Join(root, subdir)
 	if !peerORAConfigured() || p.ConnectorID == "" || p.OwnerRepo == "" {
 		if err := os.MkdirAll(work, 0o755); err != nil {
@@ -35,9 +38,9 @@ func cloneRepoInto(p Project, root, subdir string) (string, error) {
 		return work, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	creds, err := peerCloneCredentials(ctx, p.OrganizationID, p.ConnectorID, p.OwnerRepo)
+	creds, err := peerCloneCredentials(ctx, p.OrganizationID, userID, p.ConnectorID, p.OwnerRepo)
 	if err != nil {
 		return "", fmt.Errorf("clone credentials: %w", err)
 	}
@@ -56,7 +59,7 @@ func cloneRepoInto(p Project, root, subdir string) (string, error) {
 
 	branch := nz(p.DefaultBranch, "main")
 	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", branch, cloneURL, work)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(openjobenv.HostToolEnv(),
 		"GIT_ASKPASS="+askPass,
 		"OPA_GIT_ASKPASS_TOKEN="+token,
 		"GIT_TERMINAL_PROMPT=0",
@@ -67,7 +70,7 @@ func cloneRepoInto(p Project, root, subdir string) (string, error) {
 	if err != nil {
 		_ = os.RemoveAll(work)
 		cmd = exec.Command("git", "clone", "--depth", "1", cloneURL, work)
-		cmd.Env = append(os.Environ(),
+		cmd.Env = append(openjobenv.HostToolEnv(),
 			"GIT_ASKPASS="+askPass,
 			"OPA_GIT_ASKPASS_TOKEN="+token,
 			"GIT_TERMINAL_PROMPT=0",

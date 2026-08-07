@@ -77,16 +77,11 @@ func candidateRunnable(c candidate) bool {
 	}
 }
 
-// loadCandidates reads the numbered candidate env vars.
+// loadCandidates reads the numbered candidate env vars injected by the control
+// plane from an OAM resolve (OPM_MODEL_CANDIDATE_COUNT + OPM_MODEL_<i>_*).
 //
-// OPM_MODEL_CANDIDATE_COUNT bounds the loop, and each index i carries
-// OPM_MODEL_<i>_KIND / _PROVIDER / _MODEL / _BASE_URL / _API_KEY / _ENDPOINT_ID /
-// _CLI_COMMAND / _CLI_ARGS.
-//
-// With no candidate variables set, one candidate is synthesised from the legacy
-// OPM_MODEL* / CURSOR_API_KEY environment — so a runner image deployed against an
-// older control plane, or a deployment with PEER_OAM_URL unset, behaves exactly as
-// it did before.
+// With no candidate variables set, the runner reports fallback — there is no
+// synthesize-from-bare-env path (host OPM_MODEL*/CURSOR_API_KEY are not credentials).
 func loadCandidates() []candidate {
 	n, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("OPM_MODEL_CANDIDATE_COUNT")))
 	out := make([]candidate, 0, n)
@@ -114,33 +109,7 @@ func loadCandidates() []candidate {
 		}
 		out = append(out, c)
 	}
-	if len(out) > 0 {
-		return out
-	}
-	return legacyCandidates()
-}
-
-// legacyCandidates rebuilds the single pre-registry candidate.
-func legacyCandidates() []candidate {
-	key := modelAPIKey()
-	if key == "" {
-		return nil
-	}
-	provider := strings.ToLower(strings.TrimSpace(os.Getenv("OPM_MODEL_PROVIDER")))
-	kind := kindCLICursor
-	if provider == "openai" {
-		kind = kindAPIOpenAI
-	} else if provider == "anthropic" {
-		kind = kindAPIAnthropic
-	}
-	return []candidate{{
-		Index:    1,
-		Kind:     kind,
-		Provider: provider,
-		BaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("OPM_MODEL_BASE_URL")), "/"),
-		Model:    envOr("OPM_MODEL", "auto"),
-		APIKey:   key,
-	}}
+	return out
 }
 
 // retryable classifies a failure as "try the next endpoint" or "stop".

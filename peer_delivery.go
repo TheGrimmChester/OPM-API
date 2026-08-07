@@ -47,8 +47,8 @@ func (e *peerDeliveryFault) Error() string {
 
 // peerDeliveryCall posts to an ORA delivery endpoint and returns the parsed body
 // plus a *peerDeliveryFault on any non-2xx, so the concrete reason survives.
-func peerDeliveryCall(ctx context.Context, orgID, path string, body map[string]interface{}) (map[string]interface{}, error) {
-	cfg := peerORAConfig(orgID, peerPRScope)
+func peerDeliveryCall(ctx context.Context, orgID, userID, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	cfg := peerORAConfig(ctx, orgID, userID, peerPRScope)
 	client, err := openclient.PeerClient(cfg)
 	if err != nil {
 		return nil, err
@@ -118,8 +118,8 @@ type pushCredential struct {
 }
 
 // peerPushCredentials asks ORA for a Contents-write credential for this repo.
-func peerPushCredentials(ctx context.Context, orgID, connectorID, ownerRepo string) (pushCredential, error) {
-	out, err := peerDeliveryCall(ctx, orgID, "/api/peer/scm/push-credentials", map[string]interface{}{
+func peerPushCredentials(ctx context.Context, orgID, userID, connectorID, ownerRepo string) (pushCredential, error) {
+	out, err := peerDeliveryCall(ctx, orgID, userID, "/api/peer/scm/push-credentials", map[string]interface{}{
 		"connector_id":   connectorID,
 		"repo_full_name": ownerRepo,
 	})
@@ -150,8 +150,8 @@ type pullRequestMeta struct {
 }
 
 // peerCreatePullRequest opens the delivery pull request through ORA.
-func peerCreatePullRequest(ctx context.Context, orgID, connectorID, ownerRepo, title, body, head, base string, draft bool) (pullRequestMeta, error) {
-	out, err := peerDeliveryCall(ctx, orgID, "/api/peer/scm/pull-requests/create", map[string]interface{}{
+func peerCreatePullRequest(ctx context.Context, orgID, userID, connectorID, ownerRepo, title, body, head, base string, draft bool) (pullRequestMeta, error) {
+	out, err := peerDeliveryCall(ctx, orgID, userID, "/api/peer/scm/pull-requests/create", map[string]interface{}{
 		"connector_id":   connectorID,
 		"repo_full_name": ownerRepo,
 		"title":          title,
@@ -191,8 +191,8 @@ func peerCreatePullRequest(ctx context.Context, orgID, connectorID, ownerRepo, t
 }
 
 // peerMergePullRequest merges an open delivery pull request through ORA.
-func peerMergePullRequest(ctx context.Context, orgID, connectorID, ownerRepo string, prNumber int) (pullRequestMeta, error) {
-	out, err := peerDeliveryCall(ctx, orgID, "/api/peer/scm/pull-requests/merge", map[string]interface{}{
+func peerMergePullRequest(ctx context.Context, orgID, userID, connectorID, ownerRepo string, prNumber int) (pullRequestMeta, error) {
+	out, err := peerDeliveryCall(ctx, orgID, userID, "/api/peer/scm/pull-requests/merge", map[string]interface{}{
 		"connector_id":   connectorID,
 		"repo_full_name": ownerRepo,
 		"number":         prNumber,

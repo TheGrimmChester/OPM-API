@@ -13,10 +13,11 @@ import (
 	openclient "github.com/TheGrimmChester/open-client-go"
 )
 
-func peerORAConfig(orgID, scope string) openclient.PeerConfig {
+func peerORAConfig(ctx context.Context, orgID, userID, scope string) openclient.PeerConfig {
 	cfg := openclient.PeerFromEnv("PEER_ORA_URL", "opm-api", "ora-api", scope)
-	cfg.OrgID = orgID
-	return cfg
+	cfg.OrgID = strings.TrimSpace(orgID)
+	cfg.UserID = strings.TrimSpace(userID)
+	return applyJobTokenPeer(cfg, ctx)
 }
 
 func peerOPAConfig(scope string) openclient.PeerConfig {
@@ -31,23 +32,23 @@ func peerOPAConfigured() bool {
 	return strings.TrimSpace(os.Getenv("PEER_OPA_URL")) != ""
 }
 
-func peerListConnectors(ctx context.Context, orgID string) (map[string]interface{}, error) {
-	cfg := peerORAConfig(orgID, "connectors:read")
+func peerListConnectors(ctx context.Context, orgID, userID string) (map[string]interface{}, error) {
+	cfg := peerORAConfig(ctx, orgID, userID, "connectors:read")
 	var out map[string]interface{}
 	err := openclient.PeerJSON(ctx, cfg, http.MethodGet, "/api/connectors", nil, &out)
 	return out, err
 }
 
-func peerListConnectorRepos(ctx context.Context, orgID, connectorID string) (map[string]interface{}, error) {
-	cfg := peerORAConfig(orgID, "connectors:read")
+func peerListConnectorRepos(ctx context.Context, orgID, userID, connectorID string) (map[string]interface{}, error) {
+	cfg := peerORAConfig(ctx, orgID, userID, "connectors:read")
 	path := fmt.Sprintf("/api/connectors/%s/repos", connectorID)
 	var out map[string]interface{}
 	err := openclient.PeerJSON(ctx, cfg, http.MethodGet, path, nil, &out)
 	return out, err
 }
 
-func peerCloneCredentials(ctx context.Context, orgID, connectorID, ownerRepo string) (map[string]interface{}, error) {
-	cfg := peerORAConfig(orgID, "scm:clone")
+func peerCloneCredentials(ctx context.Context, orgID, userID, connectorID, ownerRepo string) (map[string]interface{}, error) {
+	cfg := peerORAConfig(ctx, orgID, userID, "scm:clone")
 	body := map[string]interface{}{
 		"connector_id":   connectorID,
 		"repo_full_name": ownerRepo,
@@ -57,12 +58,12 @@ func peerCloneCredentials(ctx context.Context, orgID, connectorID, ownerRepo str
 	return out, err
 }
 
-func peerORAConfigPM(orgID string) openclient.PeerConfig {
-	return peerORAConfig(orgID, "scm:pm")
+func peerORAConfigPM(ctx context.Context, orgID, userID string) openclient.PeerConfig {
+	return peerORAConfig(ctx, orgID, userID, "scm:pm")
 }
 
-func peerListMilestones(ctx context.Context, orgID, connectorID, ownerRepo string) (map[string]interface{}, error) {
-	cfg := peerORAConfigPM(orgID)
+func peerListMilestones(ctx context.Context, orgID, userID, connectorID, ownerRepo string) (map[string]interface{}, error) {
+	cfg := peerORAConfigPM(ctx, orgID, userID)
 	body := map[string]interface{}{
 		"connector_id":   connectorID,
 		"repo_full_name": ownerRepo,
@@ -72,8 +73,8 @@ func peerListMilestones(ctx context.Context, orgID, connectorID, ownerRepo strin
 	return out, err
 }
 
-func peerUpsertMilestone(ctx context.Context, orgID, connectorID, ownerRepo string, number int, title, description, state string) (map[string]interface{}, error) {
-	cfg := peerORAConfigPM(orgID)
+func peerUpsertMilestone(ctx context.Context, orgID, userID, connectorID, ownerRepo string, number int, title, description, state string) (map[string]interface{}, error) {
+	cfg := peerORAConfigPM(ctx, orgID, userID)
 	body := map[string]interface{}{
 		"connector_id":   connectorID,
 		"repo_full_name": ownerRepo,
@@ -87,8 +88,8 @@ func peerUpsertMilestone(ctx context.Context, orgID, connectorID, ownerRepo stri
 	return out, err
 }
 
-func peerListGitHubProjects(ctx context.Context, orgID, connectorID, ownerRepo string) (map[string]interface{}, error) {
-	cfg := peerORAConfigPM(orgID)
+func peerListGitHubProjects(ctx context.Context, orgID, userID, connectorID, ownerRepo string) (map[string]interface{}, error) {
+	cfg := peerORAConfigPM(ctx, orgID, userID)
 	body := map[string]interface{}{
 		"connector_id":   connectorID,
 		"repo_full_name": ownerRepo,
@@ -102,8 +103,8 @@ func peerListGitHubProjects(ctx context.Context, orgID, connectorID, ownerRepo s
 // status-preserving transport, not PeerJSON: ORA reports why a title refresh failed
 // (missing_organization_projects, title_sync_unsupported, item_not_found) and
 // PeerJSON would collapse that into a truncated string.
-func peerUpsertProjectItem(ctx context.Context, orgID, connectorID, projectID, itemID, title, bodyText, statusHint string) (map[string]interface{}, error) {
-	return peerPMCall(ctx, orgID, "/api/peer/scm/projects/items/upsert", map[string]interface{}{
+func peerUpsertProjectItem(ctx context.Context, orgID, userID, connectorID, projectID, itemID, title, bodyText, statusHint string) (map[string]interface{}, error) {
+	return peerPMCall(ctx, orgID, userID, "/api/peer/scm/projects/items/upsert", map[string]interface{}{
 		"connector_id": connectorID,
 		"project_id":   projectID,
 		"item_id":      itemID,
@@ -113,8 +114,8 @@ func peerUpsertProjectItem(ctx context.Context, orgID, connectorID, projectID, i
 	})
 }
 
-func peerSetProjectItemStatus(ctx context.Context, orgID, connectorID, projectID, itemID, statusHint string) (map[string]interface{}, error) {
-	return peerPMCall(ctx, orgID, "/api/peer/scm/projects/items/status", map[string]interface{}{
+func peerSetProjectItemStatus(ctx context.Context, orgID, userID, connectorID, projectID, itemID, statusHint string) (map[string]interface{}, error) {
+	return peerPMCall(ctx, orgID, userID, "/api/peer/scm/projects/items/status", map[string]interface{}{
 		"connector_id": connectorID,
 		"project_id":   projectID,
 		"item_id":      itemID,
@@ -147,8 +148,8 @@ func (e *peerIssueFault) Error() string {
 
 // peerIssueCall posts to an ORA Issues peer endpoint and returns the parsed body
 // plus a *peerIssueFault on any non-2xx, so the concrete reason survives.
-func peerIssueCall(ctx context.Context, orgID, path string, body map[string]interface{}) (map[string]interface{}, error) {
-	cfg := peerORAConfigPM(orgID)
+func peerIssueCall(ctx context.Context, orgID, userID, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	cfg := peerORAConfigPM(ctx, orgID, userID)
 	client, err := openclient.PeerClient(cfg)
 	if err != nil {
 		return nil, err
@@ -212,21 +213,21 @@ func peerIssueCall(ctx context.Context, orgID, path string, body map[string]inte
 // peerPMCall posts to an ORA Projects v2 peer endpoint. Same status-preserving
 // transport as peerIssueCall — the fault type is shared because the contract is:
 // non-2xx carries a machine-readable `status` that must survive.
-func peerPMCall(ctx context.Context, orgID, path string, body map[string]interface{}) (map[string]interface{}, error) {
-	return peerIssueCall(ctx, orgID, path, body)
+func peerPMCall(ctx context.Context, orgID, userID, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	return peerIssueCall(ctx, orgID, userID, path, body)
 }
 
 // peerGetIssue reads a single issue from the project's linked repo.
-func peerGetIssue(ctx context.Context, orgID, connectorID, ownerRepo string, number int) (map[string]interface{}, error) {
-	return peerIssueCall(ctx, orgID, "/api/peer/scm/issues/get", map[string]interface{}{
+func peerGetIssue(ctx context.Context, orgID, userID, connectorID, ownerRepo string, number int) (map[string]interface{}, error) {
+	return peerIssueCall(ctx, orgID, userID, "/api/peer/scm/issues/get", map[string]interface{}{
 		"connector_id":   connectorID,
 		"repo_full_name": ownerRepo,
 		"number":         number,
 	})
 }
 
-func peerCreateIssue(ctx context.Context, orgID, connectorID, ownerRepo, title, bodyText string, labels []string, milestone int) (map[string]interface{}, error) {
-	return peerIssueCall(ctx, orgID, "/api/peer/scm/issues/create", map[string]interface{}{
+func peerCreateIssue(ctx context.Context, orgID, userID, connectorID, ownerRepo, title, bodyText string, labels []string, milestone int) (map[string]interface{}, error) {
+	return peerIssueCall(ctx, orgID, userID, "/api/peer/scm/issues/create", map[string]interface{}{
 		"connector_id":   connectorID,
 		"repo_full_name": ownerRepo,
 		"title":          title,
@@ -238,7 +239,7 @@ func peerCreateIssue(ctx context.Context, orgID, connectorID, ownerRepo, title, 
 
 // peerUpdateIssue patches an issue. Blank title/body/state are left untouched by
 // ORA; milestone is >0 set, <0 clear, 0 leave alone.
-func peerUpdateIssue(ctx context.Context, orgID, connectorID, ownerRepo string, number int, title, bodyText, state string, milestone int, labels []string) (map[string]interface{}, error) {
+func peerUpdateIssue(ctx context.Context, orgID, userID, connectorID, ownerRepo string, number int, title, bodyText, state string, milestone int, labels []string) (map[string]interface{}, error) {
 	body := map[string]interface{}{
 		"connector_id":   connectorID,
 		"repo_full_name": ownerRepo,
@@ -251,7 +252,7 @@ func peerUpdateIssue(ctx context.Context, orgID, connectorID, ownerRepo string, 
 	if labels != nil {
 		body["labels"] = labels
 	}
-	return peerIssueCall(ctx, orgID, "/api/peer/scm/issues/update", body)
+	return peerIssueCall(ctx, orgID, userID, "/api/peer/scm/issues/update", body)
 }
 
 func peerHubGET(ctx context.Context, path string) (map[string]interface{}, error) {
@@ -264,10 +265,6 @@ func peerHubGET(ctx context.Context, path string) (map[string]interface{}, error
 		return nil, err
 	}
 	return out, nil
-}
-
-func peerHubOrganizations(ctx context.Context) (map[string]interface{}, error) {
-	return peerHubGET(ctx, "/api/tenancy/organizations")
 }
 
 func peerHubGitHubStatus(ctx context.Context) (map[string]interface{}, error) {

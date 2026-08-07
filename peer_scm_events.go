@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // SCM checker fan-out from ora-api. Stub this ship — future checker:
@@ -46,6 +47,17 @@ func handlePeerSCMEvents(w http.ResponseWriter, r *http.Request) {
 	var body peerSCMEventRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	eventID := strings.TrimSpace(body.ID)
+	if eventID == "" {
+		eventID = strings.TrimSpace(body.CommitSHA)
+	}
+	if peerSCMEventDedupSeen(r.Context(), body.SCMJobID, eventID) {
+		writeJSON(w, map[string]interface{}{
+			"checkers":  []peerCheckerResponse{},
+			"duplicate": true,
+		})
 		return
 	}
 	writeJSON(w, map[string]interface{}{

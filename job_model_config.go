@@ -4,25 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 )
 
 // The model configuration one job runs with.
 //
-// Two sources, and which one applies is decided by a single switch —
-// PEER_OAM_URL:
-//
-//   - OAM configured: the control plane resolves the model AND the key for this
-//     job's agent phase, scoped to the acting user's org (and their personal
-//     override, if any). No environment variable participates.
-//   - OAM not configured: the pre-OAM environment path, byte-for-byte. A
-//     deployment that has not adopted OAM behaves exactly as it did.
-//
-// There is deliberately no third path where a resolve failure silently falls back
-// to the environment. Once a deployment has adopted OAM, running a job with the
-// wrong credentials is worse than not running it — the env key belongs to the
-// deployment, not to the user who asked.
+// Credentials and model bindings resolve only from OAM (`PEER_OAM_URL`). There is
+// no deployment-wide OPM_MODEL* / CURSOR_API_KEY break-glass path: when OAM is
+// unset, any AI-phase job fails closed.
 type jobModelConfig struct {
 	Provider string
 	Model    string
@@ -34,12 +23,11 @@ type jobModelConfig struct {
 	ModelSource string
 	KeyScope    string
 
-	// FromOAM distinguishes a resolved config from the legacy env path.
+	// FromOAM is always true for a successful resolve.
 	FromOAM bool
 
 	// Candidates is the ordered endpoint list the runner walks. Empty means the
-	// single {Provider, Model, BaseURL, APIKey} above is all there is, which is the
-	// legacy path and what an older OAM returns.
+	// single {Provider, Model, BaseURL, APIKey} above is all there is (older OAM).
 	Candidates []resolvedEndpointCandidate
 }
 
@@ -51,19 +39,6 @@ func (c jobModelConfig) hasKey() bool { return strings.TrimSpace(c.APIKey) != ""
 // A returned error means the job must not proceed in model mode: the caller
 // surfaces it rather than degrading to a different credential.
 func resolveJobModelConfig(ctx context.Context, j Job) (jobModelConfig, error) {
-	if !oamConfigured() {
-		agentKey := strings.TrimSpace(j.AgentKey)
-		if agentKey == "" {
-			agentKey = agentKeyForAction(j.Action)
-		}
-		if agentKey != "" && authRequiredEnv() {
-			return jobModelConfig{}, fmt.Errorf(
-				"PEER_OAM_URL required when OPA_AUTH_REQUIRED is enabled (legacy deployment-wide keys are not tenant-safe)",
-			)
-		}
-		return legacyEnvModelConfig(j.Action), nil
-	}
-
 	agentKey := strings.TrimSpace(j.AgentKey)
 	if agentKey == "" {
 		agentKey = agentKeyForAction(j.Action)
@@ -72,6 +47,11 @@ func resolveJobModelConfig(ctx context.Context, j Job) (jobModelConfig, error) {
 		// An action with no AI phase (delivery, sync). Nothing to resolve, and
 		// nothing should be handed a credential.
 		return jobModelConfig{}, nil
+	}
+	if !oamConfigured() {
+		return jobModelConfig{}, fmt.Errorf(
+			"PEER_OAM_URL required for model-backed jobs (legacy OPM_MODEL*/CURSOR_API_KEY credentials removed)",
+		)
 	}
 
 	override := j.ModelOverride
@@ -97,32 +77,6 @@ func resolveJobModelConfig(ctx context.Context, j Job) (jobModelConfig, error) {
 		FromOAM:     true,
 		Candidates:  b.Candidates,
 	}, nil
-}
-
-// legacyEnvModelConfig is the pre-OAM path: one deployment-wide key and the
-// OPM_MODEL_<PHASE> environment variables.
-//
-// Retained only so a deployment without PEER_OAM_URL is unchanged. It is the thing
-// OAM replaces: every org, project and user shares this one key and this one model
-// set, which is why nobody could choose their own.
-//
-// It resolves the model through modelForAction, NOT a bare OPM_MODEL read. That
-// matters: a deployment with OPM_MODEL_CODING set to something other than
-// OPM_MODEL would otherwise silently lose its per-phase choice the moment this
-// code path replaced the old one — a regression in the very behaviour this work is
-// supposed to extend.
-func legacyEnvModelConfig(action string) jobModelConfig {
-	key := strings.TrimSpace(os.Getenv("OPM_MODEL_API_KEY"))
-	if key == "" {
-		key = strings.TrimSpace(os.Getenv("CURSOR_API_KEY"))
-	}
-	return jobModelConfig{
-		Provider:    envOr("OPM_MODEL_PROVIDER", ""),
-		Model:       modelForAction(action),
-		BaseURL:     envOr("OPM_MODEL_BASE_URL", ""),
-		APIKey:      key,
-		ModelSource: "env",
-	}
 }
 
 // recordJobResolution persists what the job actually resolved, so "which model
@@ -159,10 +113,9 @@ func recordJobResolution(store *Store, j Job, cfg jobModelConfig, agentKey strin
 
 // modelEnvForJob is the environment a runner receives for its model call.
 //
-// Only ONE model is passed. The pre-OAM code handed the runner all six
-// OPM_MODEL_<PHASE> variables and let it pick, which meant the runner re-derived
-// a decision the control plane had already made — and meant every phase's model
-// travelled into every container. The control plane decides; the runner obeys.
+// Only ONE model is passed. The control plane decides; the runner obeys. Resolved
+// OAM keys are injected into the runner container env (transport contract) via
+// writeModelEnvFile / candidateEnvLines — not read from the host process env.
 func modelEnvForJob(cfg jobModelConfig) map[string]string {
 	env := map[string]string{}
 	if m := strings.TrimSpace(cfg.Model); m != "" {
@@ -186,8 +139,8 @@ func modelEnvForJob(cfg jobModelConfig) map[string]string {
 // and keys into env would let the two arrive out of step — a candidate list
 // pointing at endpoints whose keys were not written.
 //
-// With no candidates this returns nothing and the runner falls back to the single
-// OPM_MODEL_API_KEY / OPM_MODEL* pair, which is the legacy contract.
+// With no candidates this returns nothing and the runner uses the single
+// OPM_MODEL_API_KEY / OPM_MODEL* pair injected from the resolved config.
 func candidateEnvLines(cfg jobModelConfig) []string {
 	if len(cfg.Candidates) == 0 {
 		return nil
