@@ -24,7 +24,7 @@ Requires `PEER_OAM_URL` / `PEER_ORA_URL` as documented in [interop.md](interop.m
 Selecting a family (OAM) project **is** the board. The registry id **is** the directory id (no parallel UUID identity).
 
 - `GET /api/projects` → `{ projects: Project[] }`
-- `POST /api/projects` `{ id, connectorId, ownerRepo, organizationId?, name?, githubRepoId?, htmlUrl?, defaultBranch? }` → `EnsureProject` keyed by OAM directory `id` (also accepted via `X-Project-ID`). Rejects missing id.
+- `POST /api/projects` `{ id?, connectorId?, ownerRepo?, organizationId?, name?, githubRepoId?, htmlUrl?, defaultBranch? }` → `EnsureProject` keyed by OAM directory `id` (also accepted via `X-Project-ID`). When `connectorId` / `ownerRepo` are omitted and `PEER_OAM_URL` is set, fills from OAM `connector_ids[0]` / `external_key` (fail closed if missing). Rejects missing id.
 - `POST /api/projects/ensure` `{ id? }` → upsert board row for the OAM directory project (`id` or `X-Project-ID`). Copies `external_key`→`ownerRepo` and `connector_ids[0]` when present; creates an empty board when none exists. Idempotent.
 
 `POST /api/projects` (link repo) and `POST /api/projects/ensure` **fail-closed** when `PEER_OAM_URL` is set: the concrete project id must appear in OAM `GET /api/projects?product=opm`. Nested board paths `/api/projects/{id}/…` are **not** checked separately.
