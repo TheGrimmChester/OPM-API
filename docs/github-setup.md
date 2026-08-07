@@ -10,7 +10,7 @@ OPM links **GitHub repositories** discovered through **OPA-Hub** (identity/orgs)
 | **OAM** | Account plane for connector storage and AI credentials (`PEER_OAM_URL` on OPM in family stacks) |
 | **ORA-API** | GitHub App or PAT protocol configured; lists connectors / issues clone+PR credentials |
 | **OPM-API** | `PEER_OPA_URL`, `PEER_ORA_URL`, and (recommended) `PEER_OAM_URL` set in compose |
-| **OPM-Dashboard** | Browser UI on `:8098`; login via `/hub-auth` in co-deployed mode |
+| **OPM-Dashboard** | Browser UI on `:8098`; login via `/oam-auth` in co-deployed mode |
 
 Verify peers from an authenticated session:
 
@@ -60,17 +60,16 @@ Rebuild with production tags (`opm-api:nas`, `opm-dashboard:nas`) — never smok
 ## 3. Sign in to OPM Dashboard
 
 1. Open `http://<host>:8098/login`
-2. In co-deployed mode, login is issued by **OPA-Hub** via same-origin `/hub-auth/api/auth/login` (not `opm-api` `/api/auth/login`, which returns 503 by design).
+2. In co-deployed mode, login is issued by **OAM** via same-origin `/oam-auth/api/auth/login` (not `opm-api` `/api/auth/login`, which returns 503 by design).
 3. Confirm session: `GET /api/auth/status` → `"mode":"codeployed"`, `"authenticated":true`.
 
 ## 4. Link a repository
 
-1. **Projects** → **Link GitHub repo**
-2. Select **Organization** (from `GET /api/oam/organizations`)
-3. Select **GitHub connector** (listed via ORA; install/manage in OAM → `GET /api/github/connectors`)
-4. Pick a **repository** and submit → `POST /api/projects` with the family (OAM) project `id`
+1. Use the **family project switcher** (org + one project or All projects). Boards open from the selected OAM directory project (`POST /api/projects/ensure`).
+2. On **Projects**, use **Attach GitHub from directory** when the selected family project has OAM `connector_ids` / `external_key`. OPM resolves the connector and repo from the directory — there is **no** in-product connector picker.
+3. If attach is disabled, open **Manage in Account Manager** (OAM `/connectors`) and install or bind a GitHub App/PAT for that project, then refresh.
 
-If no connectors appear, open **Manage in Account Manager** (OAM `/connectors`) and install a GitHub App or PAT for the selected org.
+Install/manage connectors only in OAM. Runtime lists (`GET /api/github/connectors`) remain for status, not for a second scoping dropdown.
 
 ## 5. Bind GitHub Milestones and Projects
 
@@ -214,7 +213,7 @@ organization's settings. The live board update can only be proved after that is 
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| Login returns 503 on `/api/auth/login` | Co-deployed mode | Use hub login (`/hub-auth`); expected behaviour |
+| Login returns 503 on `/api/auth/login` | Co-deployed mode | Use OAM login (`/oam-auth`); expected behaviour |
 | `PEER_ORA_URL not configured` on connectors | Missing peer env | Set `PEER_ORA_URL` on `opm-api`, recreate container |
 | Empty connector list, hub OK | No GitHub App install / wrong org | Install app in ORA; check `organizationId` |
 | `ora unavailable` | ORA down or service JWT mismatch | Check `ora-api` health; verify `OPEN_SERVICE_JWT_SECRET` |

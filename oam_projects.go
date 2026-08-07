@@ -166,6 +166,63 @@ func lookupOAMDirectoryProject(ctx context.Context, r *http.Request, product, pr
 	return nil, nil
 }
 
+// fillProjectSCMFromOAM copies connector_ids[0] / external_key (and empty
+// metadata) from the OAM directory when the client omitted them. Fail closed
+// when PEER_OAM_URL is set and the concrete project has no connector or repo.
+func fillProjectSCMFromOAM(r *http.Request, in Project) (Project, int, string) {
+	needConnector := strings.TrimSpace(in.ConnectorID) == ""
+	needOwner := strings.TrimSpace(normalizeOwnerRepo(in.OwnerRepo)) == ""
+	if !needConnector && !needOwner {
+		return in, 0, ""
+	}
+	if oamPeerURL() == "" {
+		if needConnector || needOwner {
+			return in, 400, "connectorId and ownerRepo required when PEER_OAM_URL is unset"
+		}
+		return in, 0, ""
+	}
+	id := strings.TrimSpace(in.ID)
+	if id == "" {
+		id = strings.TrimSpace(r.Header.Get("X-Project-ID"))
+	}
+	if id == "" || strings.EqualFold(id, "all") {
+		return in, 400, "oam project id required to resolve connector from directory"
+	}
+	dir, err := lookupOAMDirectoryProject(r.Context(), r, "opm", id)
+	if err != nil {
+		return in, 503, "could not load OAM directory project: " + err.Error()
+	}
+	if dir == nil {
+		return in, 404, "project not found in OAM directory"
+	}
+	filled := boardProjectFromOAM(dir, in.OrganizationID)
+	if needConnector {
+		in.ConnectorID = filled.ConnectorID
+	}
+	if needOwner {
+		in.OwnerRepo = filled.OwnerRepo
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		in.Name = filled.Name
+	}
+	if strings.TrimSpace(in.GithubRepoID) == "" {
+		in.GithubRepoID = filled.GithubRepoID
+	}
+	if strings.TrimSpace(in.HTMLURL) == "" {
+		in.HTMLURL = filled.HTMLURL
+	}
+	if strings.TrimSpace(in.DefaultBranch) == "" {
+		in.DefaultBranch = filled.DefaultBranch
+	}
+	if strings.TrimSpace(in.ConnectorID) == "" {
+		return in, 400, "project has no connector_ids; attach a connector in Account Manager"
+	}
+	if strings.TrimSpace(normalizeOwnerRepo(in.OwnerRepo)) == "" {
+		return in, 400, "project has no external_key (owner/repo); import a GitHub project in Account Manager"
+	}
+	return in, 0, ""
+}
+
 func boardProjectFromOAM(dir *oamDirectoryProject, requestOrg string) Project {
 	id := dir.directoryID()
 	name := strings.TrimSpace(dir.Name)

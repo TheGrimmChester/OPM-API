@@ -50,6 +50,13 @@ func registerOPMMux(mux *http.ServeMux, store *Store, authView, authAdmin func(s
 				in.OrganizationID = resolveRequestOrg(r)
 			}
 			in.OrganizationID = normalizeWriteOrg(in.OrganizationID)
+			// Prefer client fields; fill connector/owner from OAM when omitted.
+			if filled, st, msg := fillProjectSCMFromOAM(r, in); msg != "" {
+				writeError(w, st, msg)
+				return
+			} else {
+				in = filled
+			}
 			p, err := store.EnsureProject(in)
 			if err != nil {
 				writeError(w, 400, err.Error())

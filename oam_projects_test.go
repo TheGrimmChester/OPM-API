@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 )
@@ -65,5 +67,51 @@ func TestBoardProjectFromOAM(t *testing.T) {
 	org := boardProjectFromOAM(dir, "default-org")
 	if org.OrganizationID != "default-org" {
 		t.Fatalf("org stamp=%q", org.OrganizationID)
+	}
+}
+
+func TestFillProjectSCMFromOAM(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"projects": []map[string]interface{}{
+				{
+					"id":            "web",
+					"name":          "Web",
+					"external_key":  "acme/web",
+					"connector_ids": []string{"conn-1"},
+					"html_url":      "https://github.com/acme/web",
+					"default_branch": "main",
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("PEER_OAM_URL", srv.URL)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/projects", nil)
+	req.Header.Set("X-Project-ID", "web")
+	in := Project{ID: "web", OrganizationID: "default-org"}
+	got, st, msg := fillProjectSCMFromOAM(req, in)
+	if msg != "" || st != 0 {
+		t.Fatalf("unexpected err %d %q", st, msg)
+	}
+	if got.ConnectorID != "conn-1" || got.OwnerRepo != "acme/web" || got.Name != "Web" {
+		t.Fatalf("filled=%#v", got)
+	}
+
+	// Explicit client fields win.
+	in2 := Project{ID: "web", ConnectorID: "keep", OwnerRepo: "acme/other", OrganizationID: "default-org"}
+	got2, st, msg := fillProjectSCMFromOAM(req, in2)
+	if msg != "" || st != 0 {
+		t.Fatalf("explicit err %d %q", st, msg)
+	}
+	if got2.ConnectorID != "keep" || got2.OwnerRepo != "acme/other" {
+		t.Fatalf("explicit overwritten: %#v", got2)
+	}
+
+	t.Setenv("PEER_OAM_URL", "")
+	_, st, msg = fillProjectSCMFromOAM(req, Project{ID: "web"})
+	if st != 400 || msg == "" {
+		t.Fatalf("unset peer want 400, got %d %q", st, msg)
 	}
 }
