@@ -16,6 +16,7 @@ require (
 
 require (
 	github.com/TheGrimmChester/open-crypto-go v0.0.0 // indirect
+	github.com/TheGrimmChester/open-egress-proxy v0.0.0-20260808055639-6b52fa909452 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 )
 
